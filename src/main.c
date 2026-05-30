@@ -3,6 +3,7 @@
 // Global context
 Context g_ctx = {
     .port = 1080,
+    .dns_port = 0,
     .redirect_dns = false,
     .mode = MODE_REDIRECT,
     .verbose = false,
@@ -10,7 +11,8 @@ Context g_ctx = {
     .tproxy_mark = 0,
     .cgroup_created = false,
     .target_pid = 0,
-    .is_v2 = false
+    .is_v2 = false,
+    .clean_stale = false
 };
 
 volatile sig_atomic_t g_keep_running = 1;
@@ -18,6 +20,12 @@ volatile sig_atomic_t g_keep_running = 1;
 void sig_handler(int sig) {
     (void)sig;
     g_keep_running = 0;
+}
+
+void do_clean_stale(void) {
+    log_info("Cleaning up stale iptables rules and cgroups...");
+    cleanup_stale_iptables();
+    cleanup_stale_cgroups();
 }
 
 void cleanup(void) {
@@ -42,21 +50,6 @@ void cleanup(void) {
     }
 }
 
-static int detect_cgroup_version(void) {
-    struct stat st;
-    if (stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0) {
-        g_ctx.is_v2 = true;
-        snprintf(g_ctx.cg_base, sizeof(g_ctx.cg_base), "/sys/fs/cgroup");
-    } else {
-        snprintf(g_ctx.cg_base, sizeof(g_ctx.cg_base), "/sys/fs/cgroup/net_cls");
-        if (stat(g_ctx.cg_base, &st) != 0) {
-            log_error("Cgroup v1 net_cls controller not found at %s", g_ctx.cg_base);
-            return -1;
-        }
-    }
-    return 0;
-}
-
 int main(int argc, char *argv[]) {
     if (parse_args(&g_ctx, argc, argv) != 0) return 1;
     if (parse_bypass_rules(&g_ctx) != 0) return 1;
@@ -68,7 +61,12 @@ int main(int argc, char *argv[]) {
 
     if (check_dependencies() != 0) return 1;
 
-    if (detect_cgroup_version() != 0) return 1;
+    if (init_cgroup_support() != 0) return 1;
+
+    if (g_ctx.clean_stale) {
+        do_clean_stale();
+        return 0;
+    }
 
     atexit(cleanup);
     struct sigaction sa;
@@ -82,9 +80,11 @@ int main(int argc, char *argv[]) {
     if (g_ctx.verbose) {
         const char *mode_str = (g_ctx.mode == MODE_REDIRECT) ? "redirect" : (g_ctx.mode == MODE_TPROXY ? "tproxy" : "trace");
         log_info("Detected Cgroup v%d mode", g_ctx.is_v2 ? 2 : 1);
-        log_info("Mode: %s, Port: %d", mode_str, g_ctx.port);
+        log_info("Mode: %s, Port: %d (DNS: %d)", mode_str, g_ctx.port, g_ctx.dns_port);
+        if (g_ctx.mode == MODE_REDIRECT)
+            log_info("Redirect DNS: %s", g_ctx.redirect_dns ? "on" : "off");
         if (g_ctx.bypass_str) log_info("Bypass: %s", g_ctx.bypass_str);
-        if (g_ctx.mode == MODE_TPROXY && g_ctx.override_dns[0])
+        if (g_ctx.override_dns[0])
             log_info("Override DNS: %s", g_ctx.override_dns);
     }
 

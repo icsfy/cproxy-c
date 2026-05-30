@@ -40,7 +40,10 @@ sudo make install PREFIX=/usr
 此工具必须以 root 权限运行，以便修改 cgroups 和 iptables 规则。
 
 ### 关于 IPv6
-目前 `cproxy` 专注于 IPv4 的重定向和 TProxy。对于 IPv6，它会自动添加规则以**丢弃**来自被代理进程的出站 IPv6 流量，以防止泄漏。完整的 IPv6 代理支持计划在未来版本中实现。
+`cproxy` 根据模式以不同的方式处理 IPv6：
+- **Redirect 模式：** 丢弃来自被代理进程的出站 IPv6 流量，以防止由于 NAT 复杂性导致的泄漏。
+- **TProxy/Trace 模式：** 完整支持 IPv6，流量将被透明代理或记录。
+豁免规则 (Bypass) 同样支持 IPv6 地址段。
 
 ### 环境变量与 `sudo -E`
 出于安全考虑，`sudo` 默认会清洗掉你大部分的个人环境变量（如自定义的 `PATH`，`NVM_DIR` 等）。`cproxy` 会智能地帮你恢复 `HOME`, `USER`, 和 `LOGNAME` 以保证 `docker` 或 `git` 等基础命令正常工作。

@@ -4,6 +4,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
     char mode_str[32] = "redirect";
     struct option long_options[] = {
         {"port", required_argument, 0, 'p'},
+        {"dns-port", required_argument, 0, 'l'},
         {"redirect-dns", no_argument, 0, 'd'},
         {"mode", required_argument, 0, 'm'},
         {"override-dns", required_argument, 0, 'o'},
@@ -11,6 +12,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"bypass", required_argument, 0, 'b'},
         {"verbose", no_argument, 0, 'V'},
         {"dry-run", no_argument, 0, 'D'},
+        {"clean", no_argument, 0, 'C'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
@@ -18,20 +20,22 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:VDhv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:VDC hv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
                 fprintf(stderr, "Usage: %s [options] -- <command...>\n", argv[0]);
                 fprintf(stderr, "Options:\n");
                 fprintf(stderr, "  -p, --port <port>         Proxy port (default: 1080)\n");
+                fprintf(stderr, "  -l, --dns-port <port>     DNS proxy port (default: same as --port)\n");
                 fprintf(stderr, "  -m, --mode <mode>         Mode: redirect (default), tproxy, trace\n");
                 fprintf(stderr, "  -d, --redirect-dns        Redirect DNS in redirect mode\n");
-                fprintf(stderr, "  -o, --override-dns <ip>   Override DNS in tproxy mode (IPv4 only)\n");
+                fprintf(stderr, "  -o, --override-dns <ip>   Override DNS IP (DNAT/TProxy)\n");
                 fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
                 fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
                 fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
+                fprintf(stderr, "  -C, --clean               Cleanup stale iptables rules and cgroups\n");
                 fprintf(stderr, "  -h, --help                Show this help message\n");
                 exit(0);
             case 'p': {
@@ -44,10 +48,21 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 ctx->port = (int)p;
                 break;
             }
+            case 'l': {
+                char *endptr;
+                long p = strtol(optarg, &endptr, 10);
+                if (*optarg == '\0' || *endptr != '\0' || p <= 0 || p > 65535) {
+                    fprintf(stderr, "Error: Invalid DNS port: %s\n", optarg);
+                    return -1;
+                }
+                ctx->dns_port = (int)p;
+                break;
+            }
             case 'd': ctx->redirect_dns = true; break;
             case 'm': snprintf(mode_str, sizeof(mode_str), "%s", optarg); break;
             case 'V': ctx->verbose = true; break;
             case 'D': ctx->dry_run = true; break;
+            case 'C': ctx->clean_stale = true; break;
             case 'o':
                 if (is_valid_ipv4(optarg) || is_valid_ipv6(optarg)) {
                     snprintf(ctx->override_dns, sizeof(ctx->override_dns), "%s", optarg);
@@ -99,6 +114,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         fprintf(stderr, "Unknown mode: %s\n", mode_str);
         return -1;
     }
+
+    if (ctx->dns_port == 0) ctx->dns_port = ctx->port;
+
+    if (ctx->clean_stale) return 0;
 
     if (ctx->target_pid == 0 && optind >= argc) {
         fprintf(stderr, "Error: No command specified and no --pid provided.\n");

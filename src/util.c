@@ -119,7 +119,7 @@ int parse_bypass_rules(Context *ctx) {
 
         if (strlen(token) > 0) {
             snprintf(ctx->bypass_rules[idx].addr, sizeof(ctx->bypass_rules[idx].addr), "%s", token);
-            
+
             char ip_only[64];
             snprintf(ip_only, sizeof(ip_only), "%s", token);
             char *slash = strchr(ip_only, '/');

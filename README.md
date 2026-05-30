@@ -41,8 +41,11 @@ sudo make install PREFIX=/usr
 
 This tool must be run as root to modify cgroups and iptables.
 
-### IPv6 Note
-Currently, `cproxy` focuses on IPv4 redirection and TProxy. For IPv6, it automatically adds rules to **drop** outbound IPv6 traffic from the proxied process to prevent leaks. Full IPv6 proxying is planned for future versions.
+### IPv6 Support
+`cproxy` handles IPv6 differently depending on the mode:
+- **Redirect Mode:** Outbound IPv6 traffic from the proxied process is **dropped** to prevent leaks (since NAT redirection for IPv6 is complex).
+- **TProxy/Trace Mode:** Full IPv6 support is implemented. Traffic is transparently proxied or logged just like IPv4.
+Bypass rules also support IPv6 CIDRs.
 
 ### Environment Variables and `sudo -E`
 By default, running `sudo` strips almost all of your personal environment variables (like custom `PATH`, `NVM_DIR`, `GOPATH`, or IDE specific variables) for security reasons. `cproxy` will automatically restore your `HOME`, `USER`, and `LOGNAME` so that standard tools like `docker` or `git` work correctly.

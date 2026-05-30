@@ -32,6 +32,7 @@ typedef struct {
 
 typedef struct {
     int port;
+    int dns_port;
     bool redirect_dns;
     enum Mode mode;
     char override_dns[64];
@@ -44,11 +45,10 @@ typedef struct {
     bool is_v2;
     char cg_base[PATH_MAX];
     char cgroup_path[PATH_MAX];
-    char output_chain[128];
-    char prerouting_chain[128];
     int tproxy_mark;
     bool has_override_dns;
     bool cgroup_created;
+    bool clean_stale;
 } Context;
 
 extern Context g_ctx;
@@ -72,8 +72,6 @@ double get_time_ms(void);
 int run_cmd_v(const char *fmt, va_list args, int silent);
 int run_cmd(const char *fmt, ...);
 int run_cmd_silent(const char *fmt, ...);
-// Safe execution without shell
-int run_exec(int silent, ...); 
 int is_valid_ipv4(const char *ip);
 int is_valid_ipv6(const char *ip);
 int is_valid_bypass_str(const char* str);
@@ -81,15 +79,18 @@ int parse_bypass_rules(Context *ctx);
 int check_dependencies(void);
 
 // Cgroup
+int init_cgroup_support(void);
 int setup_cgroup(pid_t pid);
 int is_cgroup_empty(void);
 void cleanup_cgroup(void);
+void cleanup_stale_cgroups(void);
 
 // Iptables
 int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match);
 int apply_bypass_rules(const char* chain, const char* table, const char* iptables_cmd);
 int setup_iptables(pid_t pid);
 void cleanup_iptables(void);
+void cleanup_stale_iptables(void);
 
 // Process / Args
 int parse_args(Context *ctx, int argc, char *argv[]);
@@ -98,5 +99,6 @@ void drop_privileges(void);
 
 // Cleanup
 void cleanup(void);
+void do_clean_stale(void);
 
 #endif
