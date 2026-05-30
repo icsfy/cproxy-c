@@ -21,6 +21,7 @@ enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 // Global state for cleanup
 volatile sig_atomic_t g_keep_running = 1;
 int g_cgroup_created = 0;
+int g_is_v2 = 0;
 char g_cgroup_path[256] = {0};
 char g_output_chain[128] = {0};
 char g_prerouting_chain[128] = {0};
@@ -84,7 +85,7 @@ int is_valid_bypass_str(const char* str) {
     return valid;
 }
 
-void run_cmd_v(const char *fmt, va_list args, int silent) {
+int run_cmd_v(const char *fmt, va_list args, int silent) {
     char cmd_buf[1024];
     vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
 
@@ -103,43 +104,53 @@ void run_cmd_v(const char *fmt, va_list args, int silent) {
     } else if (pid > 0) {
         int status;
         waitpid(pid, &status, 0);
-        if (!silent && (!WIFEXITED(status) || WEXITSTATUS(status) != 0)) {
-            if (WIFEXITED(status)) {
-                fprintf(stderr, "Warning: Command returned %d: %s\n", WEXITSTATUS(status), cmd_buf);
-            } else {
-                fprintf(stderr, "Warning: Command failed: %s\n", cmd_buf);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            if (!silent) {
+                if (WIFEXITED(status)) {
+                    fprintf(stderr, "Error: Command returned %d: %s\n", WEXITSTATUS(status), cmd_buf);
+                } else {
+                    fprintf(stderr, "Error: Command failed: %s\n", cmd_buf);
+                }
             }
+            return -1;
         }
+        return 0;
     } else {
         if (!silent) perror("fork failed");
+        return -1;
     }
 }
 
-void run_cmd(const char *fmt, ...) {
+int run_cmd(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    run_cmd_v(fmt, args, 0);
+    int res = run_cmd_v(fmt, args, 0);
     va_end(args);
+    return res;
 }
 
-void run_cmd_silent(const char *fmt, ...) {
+int run_cmd_silent(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    run_cmd_v(fmt, args, 1);
+    int res = run_cmd_v(fmt, args, 1);
     va_end(args);
+    return res;
 }
 
-void init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd) {
+#define CHECK(x) do { if ((x) != 0) return -1; } while (0)
+
+int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd) {
     run_cmd_silent("%s -w -t %s -D %s -j %s", iptables_cmd, table, parent, chain);
     run_cmd_silent("%s -w -t %s -F %s", iptables_cmd, table, chain);
     run_cmd_silent("%s -w -t %s -X %s", iptables_cmd, table, chain);
 
-    run_cmd("%s -w -t %s -N %s", iptables_cmd, table, chain);
-    run_cmd("%s -w -t %s -A %s -j %s", iptables_cmd, table, parent, chain);
+    CHECK(run_cmd("%s -w -t %s -N %s", iptables_cmd, table, chain));
+    CHECK(run_cmd("%s -w -t %s -A %s -j %s", iptables_cmd, table, parent, chain));
+    return 0;
 }
 
-void apply_bypass_rules(const char* bypass_str, const char* chain, const char* table, const char* iptables_cmd) {
-    if (!bypass_str || strlen(bypass_str) == 0) return;
+int apply_bypass_rules(const char* bypass_str, const char* chain, const char* table, const char* iptables_cmd) {
+    if (!bypass_str || strlen(bypass_str) == 0) return 0;
 
     char bypass_copy[512];
     strncpy(bypass_copy, bypass_str, sizeof(bypass_copy) - 1);
@@ -164,11 +175,12 @@ void apply_bypass_rules(const char* bypass_str, const char* chain, const char* t
             int is_this_v6 = is_valid_ipv6(ip_only);
 
             if ((is_ipv6 && is_this_v6) || (!is_ipv6 && is_this_v4)) {
-                run_cmd("%s -w -t %s -A %s -d %s -j RETURN", iptables_cmd, table, chain, token);
+                CHECK(run_cmd("%s -w -t %s -A %s -d %s -j RETURN", iptables_cmd, table, chain, token));
             }
         }
         token = strtok(NULL, ",");
     }
+    return 0;
 }
 
 void cleanup(void) {
@@ -299,132 +311,124 @@ int setup_cgroup(pid_t pid, const char *cg_base) {
     fprintf(f, "%d\n", pid);
     fclose(f);
 
-    char classid_file[512];
-    snprintf(classid_file, sizeof(classid_file), "%s/net_cls.classid", g_cgroup_path);
-    f = fopen(classid_file, "w");
-    if (f) {
-        fprintf(f, "%d\n", pid);
-        fclose(f);
+    if (!g_is_v2) {
+        char classid_file[512];
+        snprintf(classid_file, sizeof(classid_file), "%s/net_cls.classid", g_cgroup_path);
+        f = fopen(classid_file, "w");
+        if (f) {
+            fprintf(f, "%d\n", pid);
+            fclose(f);
+        }
     }
     return 0;
 }
 
-void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
+int setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_rd_out_%d", pid);
 
-    init_chain("nat", g_output_chain, "OUTPUT", "iptables");
+    CHECK(init_chain("nat", g_output_chain, "OUTPUT", "iptables"));
+    CHECK(apply_bypass_rules(bypass_str, g_output_chain, "nat", "iptables"));
 
-    // Apply bypass rules before REDIRECT
-    apply_bypass_rules(bypass_str, g_output_chain, "nat", "iptables");
+    CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain));
+    CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain));
 
-    // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
-    run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain);
-    run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain);
-
-    // Block IPv6 leaks (but allow loopback and bypassed IPs)
-    init_chain("raw", g_output_chain, "OUTPUT", "ip6tables");
-
-    // Apply bypass rules for IPv6 before DROP
-    apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables");
+    CHECK(init_chain("raw", g_output_chain, "OUTPUT", "ip6tables"));
+    CHECK(apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables"));
 
     run_cmd_silent("ip6tables -w -t raw -A %s -o lo -j RETURN", g_output_chain);
 
     if (is_v2) {
-        run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --path %s -j REDIRECT --to-ports %d", g_output_chain, cgroup_path, port);
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --path %s -j REDIRECT --to-ports %d", g_output_chain, cgroup_path, port));
         if (redirect_dns) {
-            run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --path %s --dport 53 -j REDIRECT --to-ports %d", g_output_chain, cgroup_path, port);
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --path %s --dport 53 -j REDIRECT --to-ports %d", g_output_chain, cgroup_path, port));
         }
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -j DROP", g_output_chain, cgroup_path);
     } else {
-        run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --cgroup %d -j REDIRECT --to-ports %d", g_output_chain, pid, port);
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --cgroup %d -j REDIRECT --to-ports %d", g_output_chain, pid, port));
         if (redirect_dns) {
-            run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --cgroup %d --dport 53 -j REDIRECT --to-ports %d", g_output_chain, pid, port);
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --cgroup %d --dport 53 -j REDIRECT --to-ports %d", g_output_chain, pid, port));
         }
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup %d -j DROP", g_output_chain, pid);
     }
+    return 0;
 }
 
-void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
+int setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
     g_tproxy_mark = pid;
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tp_out_%d", pid);
     snprintf(g_prerouting_chain, sizeof(g_prerouting_chain), "cp_tp_pre_%d", pid);
 
-    // Clean up any stale rules/routes from a previous crash with the same PID
     run_cmd_silent("ip rule delete fwmark %d table %d", g_tproxy_mark, g_tproxy_mark);
     run_cmd_silent("ip route delete local 0.0.0.0/0 dev lo table %d", g_tproxy_mark);
 
-    // IP Rules for TPROXY routing loop:
-    run_cmd("ip rule add fwmark %d table %d", g_tproxy_mark, g_tproxy_mark);
-    run_cmd("ip route add local 0.0.0.0/0 dev lo table %d", g_tproxy_mark);
+    CHECK(run_cmd("ip rule add fwmark %d table %d", g_tproxy_mark, g_tproxy_mark));
+    CHECK(run_cmd("ip route add local 0.0.0.0/0 dev lo table %d", g_tproxy_mark));
 
-    // Mangle PREROUTING
-    init_chain("mangle", g_prerouting_chain, "PREROUTING", "iptables");
-    apply_bypass_rules(bypass_str, g_prerouting_chain, "mangle", "iptables");
-    run_cmd("iptables -w -t mangle -A %s -p udp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port);
-    run_cmd("iptables -w -t mangle -A %s -p tcp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port);
+    CHECK(init_chain("mangle", g_prerouting_chain, "PREROUTING", "iptables"));
+    CHECK(apply_bypass_rules(bypass_str, g_prerouting_chain, "mangle", "iptables"));
+    CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port));
+    CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port));
 
-    // Mangle OUTPUT
-    init_chain("mangle", g_output_chain, "OUTPUT", "iptables");
-    apply_bypass_rules(bypass_str, g_output_chain, "mangle", "iptables");
+    CHECK(init_chain("mangle", g_output_chain, "OUTPUT", "iptables"));
+    CHECK(apply_bypass_rules(bypass_str, g_output_chain, "mangle", "iptables"));
 
-    // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
-    run_cmd("iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain);
-    run_cmd("iptables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain);
+    CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain));
+    CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain));
 
     if (override_dns && strlen(override_dns) > 0) {
         g_has_override_dns = 1;
-        init_chain("nat", g_output_chain, "OUTPUT", "iptables");
-        apply_bypass_rules(bypass_str, g_output_chain, "nat", "iptables");
+        CHECK(init_chain("nat", g_output_chain, "OUTPUT", "iptables"));
+        CHECK(apply_bypass_rules(bypass_str, g_output_chain, "nat", "iptables"));
 
-        run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain);
-        run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain);
+        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain));
     }
 
-    // Block IPv6 leaks (but allow loopback and bypassed IPs)
-    init_chain("raw", g_output_chain, "OUTPUT", "ip6tables");
-    apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables");
+    CHECK(init_chain("raw", g_output_chain, "OUTPUT", "ip6tables"));
+    CHECK(apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables"));
     run_cmd_silent("ip6tables -w -t raw -A %s -o lo -j RETURN", g_output_chain);
 
     if (is_v2) {
-        run_cmd("iptables -w -t mangle -A %s -p tcp -m cgroup --path %s -j MARK --set-mark %d", g_output_chain, cgroup_path, g_tproxy_mark);
-        run_cmd("iptables -w -t mangle -A %s -p udp -m cgroup --path %s -j MARK --set-mark %d", g_output_chain, cgroup_path, g_tproxy_mark);
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -m cgroup --path %s -j MARK --set-mark %d", g_output_chain, cgroup_path, g_tproxy_mark));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -m cgroup --path %s -j MARK --set-mark %d", g_output_chain, cgroup_path, g_tproxy_mark));
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -j DROP", g_output_chain, cgroup_path);
         if (g_has_override_dns) {
-            run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --path %s --dport 53 -j DNAT --to-destination %s", g_output_chain, cgroup_path, override_dns);
-            run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --path %s --dport 53 -j DNAT --to-destination %s", g_output_chain, cgroup_path, override_dns);
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --path %s --dport 53 -j DNAT --to-destination %s", g_output_chain, cgroup_path, override_dns));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --path %s --dport 53 -j DNAT --to-destination %s", g_output_chain, cgroup_path, override_dns));
         }
     } else {
-        run_cmd("iptables -w -t mangle -A %s -p tcp -m cgroup --cgroup %d -j MARK --set-mark %d", g_output_chain, pid, g_tproxy_mark);
-        run_cmd("iptables -w -t mangle -A %s -p udp -m cgroup --cgroup %d -j MARK --set-mark %d", g_output_chain, pid, g_tproxy_mark);
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -m cgroup --cgroup %d -j MARK --set-mark %d", g_output_chain, pid, g_tproxy_mark));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -m cgroup --cgroup %d -j MARK --set-mark %d", g_output_chain, pid, g_tproxy_mark));
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup %d -j DROP", g_output_chain, pid);
         if (g_has_override_dns) {
-            run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --cgroup %d --dport 53 -j DNAT --to-destination %s", g_output_chain, pid, override_dns);
-            run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --cgroup %d --dport 53 -j DNAT --to-destination %s", g_output_chain, pid, override_dns);
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --cgroup %d --dport 53 -j DNAT --to-destination %s", g_output_chain, pid, override_dns));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --cgroup %d --dport 53 -j DNAT --to-destination %s", g_output_chain, pid, override_dns));
         }
     }
+    return 0;
 }
 
-void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const char* bypass_str) {
+int setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const char* bypass_str) {
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tr_out_%d", pid);
 
-    init_chain("raw", g_output_chain, "OUTPUT", "iptables");
-    apply_bypass_rules(bypass_str, g_output_chain, "raw", "iptables");
+    CHECK(init_chain("raw", g_output_chain, "OUTPUT", "iptables"));
+    CHECK(apply_bypass_rules(bypass_str, g_output_chain, "raw", "iptables"));
 
-    // IPv6 Trace
-    init_chain("raw", g_output_chain, "OUTPUT", "ip6tables");
-    apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables");
+    CHECK(init_chain("raw", g_output_chain, "OUTPUT", "ip6tables"));
+    CHECK(apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables"));
 
     if (is_v2) {
-        run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG", g_output_chain, cgroup_path);
-        run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG", g_output_chain, cgroup_path);
+        CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG", g_output_chain, cgroup_path));
+        CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG", g_output_chain, cgroup_path));
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG", g_output_chain, cgroup_path);
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG", g_output_chain, cgroup_path);
     } else {
-        run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup %d -p tcp -j LOG", g_output_chain, pid);
-        run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup %d -p udp -j LOG", g_output_chain, pid);
+        CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup %d -p tcp -j LOG", g_output_chain, pid));
+        CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup %d -p udp -j LOG", g_output_chain, pid));
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup %d -p tcp -j LOG", g_output_chain, pid);
         run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup %d -p udp -j LOG", g_output_chain, pid);
     }
+    return 0;
 }
 
 int is_cgroup_empty(void) {
@@ -581,11 +585,10 @@ int main(int argc, char *argv[]) {
     sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
 
-    int is_v2 = 0;
     const char *cg_base = "/sys/fs/cgroup/net_cls";
     struct stat st;
     if (stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0) {
-        is_v2 = 1;
+        g_is_v2 = 1;
         cg_base = "/sys/fs/cgroup";
     }
 
@@ -660,16 +663,22 @@ int main(int argc, char *argv[]) {
     }
 
     char relative_cg_path[256] = {0};
-    if (is_v2) {
+    if (g_is_v2) {
         snprintf(relative_cg_path, sizeof(relative_cg_path), "cproxy-%d", process_to_proxy);
     }
 
+    int res = 0;
     if (g_mode == MODE_REDIRECT) {
-        setup_iptables_redirect(process_to_proxy, port, redirect_dns, is_v2, relative_cg_path, bypass_str);
+        res = setup_iptables_redirect(process_to_proxy, port, redirect_dns, g_is_v2, relative_cg_path, bypass_str);
     } else if (g_mode == MODE_TPROXY) {
-        setup_iptables_tproxy(process_to_proxy, port, override_dns, is_v2, relative_cg_path, bypass_str);
+        res = setup_iptables_tproxy(process_to_proxy, port, override_dns, g_is_v2, relative_cg_path, bypass_str);
     } else if (g_mode == MODE_TRACE) {
-        setup_iptables_trace(process_to_proxy, is_v2, relative_cg_path, bypass_str);
+        res = setup_iptables_trace(process_to_proxy, g_is_v2, relative_cg_path, bypass_str);
+    }
+
+    if (res != 0) {
+        if (target_pid == 0) close(pipefd[1]);
+        return 1;
     }
 
     if (target_pid > 0) {
