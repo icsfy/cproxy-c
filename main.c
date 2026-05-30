@@ -388,7 +388,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    char relative_cg_path[256];
+    char relative_cg_path[256] = {0};
     if (is_v2) {
         snprintf(relative_cg_path, sizeof(relative_cg_path), "cproxy-%d", process_to_proxy);
     }
@@ -427,8 +427,8 @@ int main(int argc, char *argv[]) {
             gid_t gid = atoi(sudo_gid_str);
 
             if (initgroups(sudo_user, gid) != 0) perror("Warning: initgroups failed");
-            if (setgid(gid) != 0) perror("setgid failed");
-            if (setuid(uid) != 0) perror("setuid failed");
+            if (setgid(gid) != 0) { perror("setgid failed"); _exit(1); }
+            if (setuid(uid) != 0) { perror("setuid failed"); _exit(1); }
 
             struct passwd *pw = getpwuid(uid);
             if (pw) {
@@ -449,7 +449,13 @@ int main(int argc, char *argv[]) {
     } else {
         // Parent
         // Crucial fix: Move parent out of the target cgroup to prevent deadlock and allow rmdir
-        FILE *f = fopen("/sys/fs/cgroup/cgroup.procs", "w");
+        char parent_cg_path[256];
+        snprintf(parent_cg_path, sizeof(parent_cg_path), "%s/cgroup.procs", cg_base);
+        FILE *f = fopen(parent_cg_path, "w");
+        if (!f) {
+            snprintf(parent_cg_path, sizeof(parent_cg_path), "%s/tasks", cg_base);
+            f = fopen(parent_cg_path, "w");
+        }
         if (f) {
             fprintf(f, "%d\n", getpid());
             fclose(f);
