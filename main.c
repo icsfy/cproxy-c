@@ -226,11 +226,13 @@ void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, c
 
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -N %s", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
-    snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
-    snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
 
     // Apply bypass rules before REDIRECT
     apply_bypass_rules(bypass_str, g_output_chain, "nat");
+
+    // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
+    snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
+    snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
 
     // Block IPv6 leaks (but allow loopback)
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
@@ -273,15 +275,23 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     // Mangle OUTPUT
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -N %s", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
-    snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
-    snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
+    
     apply_bypass_rules(bypass_str, g_output_chain, "mangle"); // Bypass in OUTPUT
+
+    // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
+    snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
+    snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
 
     if (override_dns && strlen(override_dns) > 0) {
         g_has_override_dns = 1;
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -N %s", g_output_chain); run_cmd(cmd);
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
-        snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
+        
+        apply_bypass_rules(bypass_str, g_output_chain, "nat"); // Allow user to bypass DNS override
+
+        // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
+        snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
+        snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
     }
 
     // Block IPv6 leaks (but allow loopback)
@@ -295,6 +305,7 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
         snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A %s -m cgroup --path %s -j DROP 2>/dev/null", g_output_chain, cgroup_path); run_cmd_silent(cmd);
         if (g_has_override_dns) {
             snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -m cgroup --path %s --dport 53 -j DNAT --to-destination %s", g_output_chain, cgroup_path, override_dns); run_cmd(cmd);
+            snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -m cgroup --path %s --dport 53 -j DNAT --to-destination %s", g_output_chain, cgroup_path, override_dns); run_cmd(cmd);
         }
     } else {
         snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -m cgroup --cgroup %d -j MARK --set-mark %d", g_output_chain, pid, g_tproxy_mark); run_cmd(cmd);
@@ -302,6 +313,7 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
         snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A %s -m cgroup --cgroup %d -j DROP 2>/dev/null", g_output_chain, pid); run_cmd_silent(cmd);
         if (g_has_override_dns) {
             snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -m cgroup --cgroup %d --dport 53 -j DNAT --to-destination %s", g_output_chain, pid, override_dns); run_cmd(cmd);
+            snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -m cgroup --cgroup %d --dport 53 -j DNAT --to-destination %s", g_output_chain, pid, override_dns); run_cmd(cmd);
         }
     }
 }
