@@ -336,6 +336,11 @@ void cleanup(void) {
         }
         g_ctx.cgroup_created = 0;
     }
+
+    if (g_ctx.bypass_str) {
+        free(g_ctx.bypass_str);
+        g_ctx.bypass_str = NULL;
+    }
 }
 
 int setup_cgroup(pid_t pid) {
@@ -468,9 +473,13 @@ int setup_iptables(pid_t pid) {
         if (g_ctx.is_v2) {
             CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path));
             CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path));
+            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path);
+            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path);
         } else {
             CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup %d -p tcp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, pid));
             CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup %d -p udp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, pid));
+            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup %d -p tcp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, pid);
+            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup %d -p udp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, pid);
         }
     }
     return 0;
@@ -542,6 +551,15 @@ int main(int argc, char *argv[]) {
 
     if (check_dependencies() != 0) return 1;
 
+    atexit(cleanup);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sig_handler;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+
     char mode_str[32] = "redirect";
     pid_t target_pid = 0;
     int status = 0;
@@ -561,6 +579,7 @@ int main(int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
+    int ret = 0;
     while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:Vhv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); return 0;
@@ -585,7 +604,7 @@ int main(int argc, char *argv[]) {
                     snprintf(g_ctx.override_dns, sizeof(g_ctx.override_dns), "%s", optarg);
                 } else {
                     fprintf(stderr, "Error: Invalid IPv4 address for --override-dns\n");
-                    return 1;
+                    ret = 1; goto cleanup_all;
                 }
                 break;
             case 'i': target_pid = atoi(optarg); break;
@@ -595,7 +614,7 @@ int main(int argc, char *argv[]) {
                     g_ctx.bypass_str = strdup(optarg);
                 } else {
                     fprintf(stderr, "Error: Invalid --bypass string\n");
-                    return 1;
+                    ret = 1; goto cleanup_all;
                 }
                 break;
             default: return 1;
@@ -605,26 +624,17 @@ int main(int argc, char *argv[]) {
     if (strcmp(mode_str, "redirect") == 0) g_ctx.mode = MODE_REDIRECT;
     else if (strcmp(mode_str, "tproxy") == 0) g_ctx.mode = MODE_TPROXY;
     else if (strcmp(mode_str, "trace") == 0) g_ctx.mode = MODE_TRACE;
-    else { fprintf(stderr, "Unknown mode: %s\n", mode_str); return 1; }
+    else { fprintf(stderr, "Unknown mode: %s\n", mode_str); ret = 1; goto cleanup_all; }
 
     if (target_pid == 0 && optind >= argc) {
         fprintf(stderr, "Error: No command specified and no --pid provided.\n");
-        return 1;
+        ret = 1; goto cleanup_all;
     }
 
     if (!g_ctx.bypass_str) {
         char *env_bypass = getenv("CPROXY_BYPASS");
         if (env_bypass && is_valid_bypass_str(env_bypass)) g_ctx.bypass_str = strdup(env_bypass);
     }
-
-    atexit(cleanup);
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sig_handler;
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGQUIT, &sa, NULL);
-    sigaction(SIGHUP, &sa, NULL);
 
     struct stat st;
     if (stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0) {
@@ -634,7 +644,7 @@ int main(int argc, char *argv[]) {
         snprintf(g_ctx.cg_base, sizeof(g_ctx.cg_base), "/sys/fs/cgroup/net_cls");
         if (stat(g_ctx.cg_base, &st) != 0) {
             fprintf(stderr, "Error: Cgroup v1 net_cls controller not found at %s\n", g_ctx.cg_base);
-            return 1;
+            ret = 1; goto cleanup_all;
         }
     }
 
@@ -643,9 +653,9 @@ int main(int argc, char *argv[]) {
     int pipefd[2];
     pid_t child_pid = 0;
     if (target_pid == 0) {
-        if (pipe(pipefd) == -1) { perror("pipe failed"); return 1; }
+        if (pipe(pipefd) == -1) { perror("pipe failed"); ret = 1; goto cleanup_all; }
         child_pid = fork();
-        if (child_pid < 0) { perror("fork failed"); return 1; }
+        if (child_pid < 0) { perror("fork failed"); ret = 1; goto cleanup_all; }
         if (child_pid == 0) {
             close(pipefd[1]);
             char sync_buf;
@@ -674,8 +684,8 @@ int main(int argc, char *argv[]) {
     }
 
     pid_t process_to_proxy = (target_pid > 0) ? target_pid : child_pid;
-    if (setup_cgroup(process_to_proxy) != 0) { if (target_pid == 0) close(pipefd[1]); return 1; }
-    if (setup_iptables(process_to_proxy) != 0) { if (target_pid == 0) close(pipefd[1]); return 1; }
+    if (setup_cgroup(process_to_proxy) != 0) { if (target_pid == 0) close(pipefd[1]); ret = 1; goto cleanup_all; }
+    if (setup_iptables(process_to_proxy) != 0) { if (target_pid == 0) close(pipefd[1]); ret = 1; goto cleanup_all; }
 
     if (target_pid > 0) {
         printf("Proxying PID %d. Press Ctrl+C to stop...\n", target_pid);
@@ -701,7 +711,10 @@ int main(int argc, char *argv[]) {
     int wait_timeout = 50; // 5s
     while (!is_cgroup_empty() && wait_timeout-- > 0) usleep(100000);
 
-    if (g_ctx.bypass_str) free(g_ctx.bypass_str);
-    if (target_pid > 0) return 0;
-    return WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 0);
+    if (target_pid == 0) {
+        ret = WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 0);
+    }
+
+cleanup_all:
+    return ret;
 }
