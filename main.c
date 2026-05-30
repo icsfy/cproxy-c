@@ -18,7 +18,7 @@
 #include <fcntl.h>
 #include <limits.h>
 
-#define CPROXY_VERSION "1.2.0"
+#define CPROXY_VERSION "1.2.1"
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
@@ -422,12 +422,14 @@ int setup_iptables(pid_t pid) {
             CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --path %s -j REDIRECT --to-ports %d", g_ctx.output_chain, relative_cg_path, g_ctx.port));
             if (g_ctx.redirect_dns) {
                 CHECK(run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --path %s --dport 53 -j REDIRECT --to-ports %d", g_ctx.output_chain, relative_cg_path, g_ctx.port));
+                CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --path %s --dport 53 -j REDIRECT --to-ports %d", g_ctx.output_chain, relative_cg_path, g_ctx.port));
             }
             run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -j DROP", out6_chain, relative_cg_path);
         } else {
             CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --cgroup 0x%08x -j REDIRECT --to-ports %d", g_ctx.output_chain, (1 << 16) | (pid & 0xFFFF), g_ctx.port));
             if (g_ctx.redirect_dns) {
                 CHECK(run_cmd("iptables -w -t nat -A %s -p udp -m cgroup --cgroup 0x%08x --dport 53 -j REDIRECT --to-ports %d", g_ctx.output_chain, (1 << 16) | (pid & 0xFFFF), g_ctx.port));
+                CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -m cgroup --cgroup 0x%08x --dport 53 -j REDIRECT --to-ports %d", g_ctx.output_chain, (1 << 16) | (pid & 0xFFFF), g_ctx.port));
             }
             run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup 0x%08x -j DROP", out6_chain, (1 << 16) | (pid & 0xFFFF));
         }
@@ -496,15 +498,11 @@ int setup_iptables(pid_t pid) {
         CHECK(apply_bypass_rules(g_ctx.bypass_str, out6_chain, "raw", "ip6tables"));
 
         if (g_ctx.is_v2) {
-            CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path));
-            CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path));
-            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG --log-prefix \"cproxy: \"", out6_chain, relative_cg_path);
-            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -p udp -j LOG --log-prefix \"cproxy: \"", out6_chain, relative_cg_path);
+            CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --path %s -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, relative_cg_path));
+            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --path %s -j LOG --log-prefix \"cproxy: \"", out6_chain, relative_cg_path);
         } else {
-            CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup 0x%08x -p tcp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, (1 << 16) | (pid & 0xFFFF)));
-            CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup 0x%08x -p udp -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, (1 << 16) | (pid & 0xFFFF)));
-            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup 0x%08x -p tcp -j LOG --log-prefix \"cproxy: \"", out6_chain, (1 << 16) | (pid & 0xFFFF));
-            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup 0x%08x -p udp -j LOG --log-prefix \"cproxy: \"", out6_chain, (1 << 16) | (pid & 0xFFFF));
+            CHECK(run_cmd("iptables -w -t raw -A %s -m cgroup --cgroup 0x%08x -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain, (1 << 16) | (pid & 0xFFFF)));
+            run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup 0x%08x -j LOG --log-prefix \"cproxy: \"", out6_chain, (1 << 16) | (pid & 0xFFFF));
         }
     }
     return 0;

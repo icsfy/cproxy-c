@@ -13,9 +13,9 @@ It was created to address and explore specific system-level mechanics that are c
 This C version achieves feature parity with the core functionalities (Redirect, TProxy, Trace) of the Rust version while acting as a proof-of-concept for stricter environment and resource management.
 
 ## Features
-- **Redirect Mode:** Redirect TCP and DNS UDP traffic.
+- **Redirect Mode:** Redirect TCP and DNS (UDP/TCP) traffic.
 - **TProxy Mode:** Transparently proxy TCP and UDP traffic with optional DNS overriding.
-- **Trace Mode:** Trace application network activity using iptables LOG target.
+- **Trace Mode:** Trace application network activity (all protocols) using iptables LOG target.
 - **Proxy Existing Processes:** Attach to an existing PID and proxy its traffic.
 - **IP Bypass:** Ignore specific IP ranges (like local LANs) to prevent routing loops and proxying internal traffic.
 - **Robust Process Management:** Uses a non-blocking polling mechanism (100ms) for ultra-responsive cleanup and process state monitoring.
