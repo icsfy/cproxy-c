@@ -39,7 +39,9 @@ int setup_cgroup(pid_t pid) {
         snprintf(classid_file, sizeof(classid_file), "%s/net_cls.classid", g_ctx.cgroup_path);
         f = fopen(classid_file, "w");
         if (f) {
-            fprintf(f, "0x%08x\n", (1 << 16) | (pid & 0xFFFF));
+            // Use (PID >> 16) + 1 as major and PID & 0xFFFF as minor to ensure uniqueness
+            unsigned int classid = (((unsigned int)(pid >> 16) + 1) << 16) | (pid & 0xFFFF);
+            fprintf(f, "0x%08x\n", classid);
             fclose(f);
         }
     }

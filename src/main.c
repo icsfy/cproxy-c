@@ -105,10 +105,10 @@ int main(int argc, char *argv[]) {
             case 'V': g_ctx.verbose = 1; break;
             case 'D': g_ctx.dry_run = 1; break;
             case 'o':
-                if (is_valid_ipv4(optarg)) {
+                if (is_valid_ipv4(optarg) || is_valid_ipv6(optarg)) {
                     snprintf(g_ctx.override_dns, sizeof(g_ctx.override_dns), "%s", optarg);
                 } else {
-                    fprintf(stderr, "Error: Invalid IPv4 address for --override-dns\n");
+                    fprintf(stderr, "Error: Invalid IP address for --override-dns\n");
                     ret = 1; goto cleanup_all;
                 }
                 break;
