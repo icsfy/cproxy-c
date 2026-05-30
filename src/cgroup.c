@@ -6,6 +6,8 @@ int setup_cgroup(pid_t pid) {
         return -1;
     }
 
+    if (g_ctx.verbose) printf("[INFO] Creating cgroup: %s\n", g_ctx.cgroup_path);
+
     if (g_ctx.dry_run) {
         printf("[DEBUG] Would create cgroup: %s\n", g_ctx.cgroup_path);
         g_ctx.cgroup_created = 1;
@@ -27,11 +29,15 @@ int setup_cgroup(pid_t pid) {
         snprintf(tasks_file, sizeof(tasks_file), "%s/tasks", g_ctx.cgroup_path);
         f = fopen(tasks_file, "w");
         if (!f) {
-            perror("Failed to open cgroup.procs or tasks");
+            perror("Failed to open cgroup.procs or tasks for writing");
             return -1;
         }
     }
-    fprintf(f, "%d\n", pid);
+    if (fprintf(f, "%d\n", pid) < 0) {
+        perror("Failed to write PID to cgroup tasks file");
+        fclose(f);
+        return -1;
+    }
     fclose(f);
 
     if (!g_ctx.is_v2) {
@@ -41,8 +47,12 @@ int setup_cgroup(pid_t pid) {
         if (f) {
             // Use (PID >> 16) + 1 as major and PID & 0xFFFF as minor to ensure uniqueness
             unsigned int classid = (((unsigned int)(pid >> 16) + 1) << 16) | (pid & 0xFFFF);
+            if (g_ctx.verbose) printf("[INFO] Setting net_cls.classid to 0x%08x\n", classid);
             fprintf(f, "0x%08x\n", classid);
             fclose(f);
+        } else {
+            perror("Failed to open net_cls.classid for writing");
+            // Not strictly fatal on some systems if net_cls is not fully supported, but we should warn
         }
     }
     return 0;
@@ -72,11 +82,14 @@ int is_cgroup_empty(void) {
 
 void cleanup_cgroup(void) {
     if (g_ctx.cgroup_created && g_ctx.cgroup_path[0] != '\0') {
+        if (g_ctx.verbose) printf("[INFO] Cleaning up cgroup: %s\n", g_ctx.cgroup_path);
         if (g_ctx.dry_run) {
             printf("[DEBUG] Would cleanup cgroup: %s\n", g_ctx.cgroup_path);
             g_ctx.cgroup_created = 0;
             return;
         }
+
+        // Try to move any remaining processes back to the parent cgroup
         char parent_tasks_file[PATH_MAX + 64];
         char cg_base_path[PATH_MAX];
         snprintf(cg_base_path, sizeof(cg_base_path), "%s", g_ctx.cgroup_path);
@@ -102,6 +115,7 @@ void cleanup_cgroup(void) {
                     while (fgets(buf, sizeof(buf), f) != NULL) {
                         int pid = atoi(buf);
                         if (pid > 0) {
+                            if (g_ctx.verbose) printf("[INFO] Moving PID %d back to parent cgroup\n", pid);
                             fprintf(f_parent, "%d\n", pid);
                             fflush(f_parent);
                         }
@@ -111,8 +125,13 @@ void cleanup_cgroup(void) {
                 fclose(f_parent);
             }
         }
+
         if (rmdir(g_ctx.cgroup_path) != 0 && errno != ENOENT) {
-            if (g_ctx.verbose) perror("rmdir cgroup failed");
+            if (g_ctx.verbose) {
+                char err_msg[PATH_MAX + 64];
+                snprintf(err_msg, sizeof(err_msg), "rmdir cgroup '%s' failed", g_ctx.cgroup_path);
+                perror(err_msg);
+            }
         }
         g_ctx.cgroup_created = 0;
     }

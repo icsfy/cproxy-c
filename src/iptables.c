@@ -6,6 +6,9 @@ static int setup_tproxy_routing(int mark, int family) {
     const char *ip_cmd = (family == AF_INET6) ? "ip -6" : "ip";
     const char *any_addr = (family == AF_INET6) ? "::/0" : "0.0.0.0/0";
 
+    if (g_ctx.verbose) printf("[INFO] Setting up TProxy routing for %s (mark: 0x%x)\n",
+                               (family == AF_INET6) ? "IPv6" : "IPv4", mark);
+
     run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);
     run_cmd_silent("%s route delete local %s dev lo table %d", ip_cmd, any_addr, mark);
 
@@ -87,9 +90,7 @@ static void get_cgroup_match(char *buf, size_t len, const char *relative_cg_path
 
 int setup_iptables(pid_t pid) {
     char relative_cg_path[PATH_MAX] = {0};
-    if (g_ctx.is_v2) {
-        snprintf(relative_cg_path, sizeof(relative_cg_path), "/cproxy-%d", pid);
-    }
+    if (g_ctx.is_v2) snprintf(relative_cg_path, sizeof(relative_cg_path), "/cproxy-%d", pid);
 
     char cg_match[256];
     get_cgroup_match(cg_match, sizeof(cg_match), relative_cg_path, pid);
@@ -99,94 +100,102 @@ int setup_iptables(pid_t pid) {
 
     if (g_ctx.mode == MODE_REDIRECT) {
         snprintf(g_ctx.output_chain, sizeof(g_ctx.output_chain), "CP_RD_OUT_%d", pid);
-        CHECK(init_chain("nat", g_ctx.output_chain, "OUTPUT", "iptables", cg_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, g_ctx.output_chain, "nat", "iptables"));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
-
         char out6_chain[128];
         snprintf(out6_chain, sizeof(out6_chain), "CP6_RD_OUT_%d", pid);
-        CHECK(init_chain("raw", out6_chain, "OUTPUT", "ip6tables", cg_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, out6_chain, "raw", "ip6tables"));
-        run_cmd_silent("ip6tables -w -t raw -A %s -o lo -j RETURN", out6_chain);
+
+        CHECK(init_chain("nat", g_ctx.output_chain, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, g_ctx.output_chain, "nat", "iptables"));
+
+        // Exclude traffic on loopback that isn't DNS
+        CHECK(run_cmd("iptables -w -t nat -A %s -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
+
+        if (!g_ctx.redirect_dns) {
+            // Specifically bypass DNS if not redirecting
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j RETURN", g_ctx.output_chain));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j RETURN", g_ctx.output_chain));
+        }
 
         CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", g_ctx.output_chain, g_ctx.port));
         if (g_ctx.redirect_dns) {
             CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", g_ctx.output_chain, g_ctx.port));
             CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", g_ctx.output_chain, g_ctx.port));
         }
+
+        // IPv6: drop all outbound traffic from the process to prevent leaks in redirect mode
+        CHECK(init_chain("raw", out6_chain, "OUTPUT", "ip6tables", cg_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, out6_chain, "raw", "ip6tables"));
+        run_cmd_silent("ip6tables -w -t raw -A %s -o lo -j RETURN", out6_chain);
         run_cmd_silent("ip6tables -w -t raw -A %s -j DROP", out6_chain);
+
     } else if (g_ctx.mode == MODE_TPROXY) {
         g_ctx.tproxy_mark = pid + 10000;
-        snprintf(g_ctx.output_chain, sizeof(g_ctx.output_chain), "CP_TP_OUT_%d", pid);
-        snprintf(g_ctx.prerouting_chain, sizeof(g_ctx.prerouting_chain), "CP_TP_PRE_%d", pid);
+        char pre4[128], out4[128], pre6[128], out6[128];
+        snprintf(out4, sizeof(out4), "CP_TP_OUT_%d", pid);
+        snprintf(pre4, sizeof(pre4), "CP_TP_PRE_%d", pid);
+        snprintf(out6, sizeof(out6), "CP6_TP_OUT_%d", pid);
+        snprintf(pre6, sizeof(pre6), "CP6_TP_PRE_%d", pid);
 
         CHECK(setup_tproxy_routing(g_ctx.tproxy_mark, AF_INET));
         CHECK(setup_tproxy_routing(g_ctx.tproxy_mark, AF_INET6));
 
-        CHECK(init_chain("mangle", g_ctx.prerouting_chain, "PREROUTING", "iptables", mark_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, g_ctx.prerouting_chain, "mangle", "iptables"));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_ctx.prerouting_chain, g_ctx.port));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_ctx.prerouting_chain, g_ctx.port));
+        // IPv4 TProxy
+        CHECK(init_chain("mangle", pre4, "PREROUTING", "iptables", mark_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, pre4, "mangle", "iptables"));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
 
-        char pre6_chain[128];
-        snprintf(pre6_chain, sizeof(pre6_chain), "CP6_TP_PRE_%d", pid);
-        CHECK(init_chain("mangle", pre6_chain, "PREROUTING", "ip6tables", mark_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, pre6_chain, "mangle", "ip6tables"));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j TPROXY --on-ip ::1 --on-port %d", pre6_chain, g_ctx.port));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j TPROXY --on-ip ::1 --on-port %d", pre6_chain, g_ctx.port));
+        CHECK(init_chain("mangle", out4, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, out4, "mangle", "iptables"));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", out4));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", out4));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", out4, g_ctx.tproxy_mark));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", out4, g_ctx.tproxy_mark));
 
-        CHECK(init_chain("mangle", g_ctx.output_chain, "OUTPUT", "iptables", cg_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, g_ctx.output_chain, "mangle", "iptables"));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
+        // IPv6 TProxy
+        CHECK(init_chain("mangle", pre6, "PREROUTING", "ip6tables", mark_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, pre6, "mangle", "ip6tables"));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
 
-        char out6_chain[128];
-        snprintf(out6_chain, sizeof(out6_chain), "CP6_TP_OUT_%d", pid);
-        CHECK(init_chain("mangle", out6_chain, "OUTPUT", "ip6tables", cg_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, out6_chain, "mangle", "ip6tables"));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", out6_chain));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", out6_chain));
+        CHECK(init_chain("mangle", out6, "OUTPUT", "ip6tables", cg_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, out6, "mangle", "ip6tables"));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", out6));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", out6));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", out6, g_ctx.tproxy_mark));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", out6, g_ctx.tproxy_mark));
 
-        char dns_chain[128] = {0};
-        char dns6_chain[128] = {0};
         if (g_ctx.override_dns[0] != '\0') {
             g_ctx.has_override_dns = 1;
+            char dns4[128], dns6[128];
+            snprintf(dns4, sizeof(dns4), "CP_TP_DNS_%d", pid);
+            snprintf(dns6, sizeof(dns6), "CP6_TP_DNS_%d", pid);
+
             if (is_valid_ipv4(g_ctx.override_dns)) {
-                snprintf(dns_chain, sizeof(dns_chain), "CP_TP_DNS_%d", pid);
-                CHECK(init_chain("nat", dns_chain, "OUTPUT", "iptables", cg_match));
-                CHECK(apply_bypass_rules(g_ctx.bypass_str, dns_chain, "nat", "iptables"));
-                CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", dns_chain));
-                CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", dns_chain));
-                CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns_chain, g_ctx.override_dns));
-                CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns_chain, g_ctx.override_dns));
+                CHECK(init_chain("nat", dns4, "OUTPUT", "iptables", cg_match));
+                CHECK(apply_bypass_rules(g_ctx.bypass_str, dns4, "nat", "iptables"));
+                CHECK(run_cmd("iptables -w -t nat -A %s -o lo ! --dport 53 -j RETURN", dns4));
+                CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns4, g_ctx.override_dns));
+                CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns4, g_ctx.override_dns));
             } else if (is_valid_ipv6(g_ctx.override_dns)) {
-                snprintf(dns6_chain, sizeof(dns6_chain), "CP6_TP_DNS_%d", pid);
-                CHECK(init_chain("nat", dns6_chain, "OUTPUT", "ip6tables", cg_match));
-                CHECK(apply_bypass_rules(g_ctx.bypass_str, dns6_chain, "nat", "ip6tables"));
-                CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", dns6_chain));
-                CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", dns6_chain));
-                CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns6_chain, g_ctx.override_dns));
-                CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns6_chain, g_ctx.override_dns));
+                CHECK(init_chain("nat", dns6, "OUTPUT", "ip6tables", cg_match));
+                CHECK(apply_bypass_rules(g_ctx.bypass_str, dns6, "nat", "ip6tables"));
+                CHECK(run_cmd("ip6tables -w -t nat -A %s -o lo ! --dport 53 -j RETURN", dns6));
+                CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns6, g_ctx.override_dns));
+                CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns6, g_ctx.override_dns));
             }
         }
-
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", g_ctx.output_chain, g_ctx.tproxy_mark));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", g_ctx.output_chain, g_ctx.tproxy_mark));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", out6_chain, g_ctx.tproxy_mark));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", out6_chain, g_ctx.tproxy_mark));
     } else if (g_ctx.mode == MODE_TRACE) {
-        snprintf(g_ctx.output_chain, sizeof(g_ctx.output_chain), "CP_TR_OUT_%d", pid);
-        CHECK(init_chain("raw", g_ctx.output_chain, "OUTPUT", "iptables", cg_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, g_ctx.output_chain, "raw", "iptables"));
+        char out4[128], out6[128];
+        snprintf(out4, sizeof(out4), "CP_TR_OUT_%d", pid);
+        snprintf(out6, sizeof(out6), "CP6_TR_OUT_%d", pid);
 
-        char out6_chain[128];
-        snprintf(out6_chain, sizeof(out6_chain), "CP6_TR_OUT_%d", pid);
-        CHECK(init_chain("raw", out6_chain, "OUTPUT", "ip6tables", cg_match));
-        CHECK(apply_bypass_rules(g_ctx.bypass_str, out6_chain, "raw", "ip6tables"));
+        CHECK(init_chain("raw", out4, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, out4, "raw", "iptables"));
+        CHECK(run_cmd("iptables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out4));
 
-        CHECK(run_cmd("iptables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", g_ctx.output_chain));
-        run_cmd_silent("ip6tables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out6_chain);
+        CHECK(init_chain("raw", out6, "OUTPUT", "ip6tables", cg_match));
+        CHECK(apply_bypass_rules(g_ctx.bypass_str, out6, "raw", "ip6tables"));
+        run_cmd_silent("ip6tables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out6);
     }
     return 0;
 }
@@ -196,9 +205,7 @@ void cleanup_iptables(void) {
     if (pid <= 0) return;
 
     char relative_cg_path[PATH_MAX] = {0};
-    if (g_ctx.is_v2) {
-        snprintf(relative_cg_path, sizeof(relative_cg_path), "/cproxy-%d", pid);
-    }
+    if (g_ctx.is_v2) snprintf(relative_cg_path, sizeof(relative_cg_path), "/cproxy-%d", pid);
     char cg_match[256];
     get_cgroup_match(cg_match, sizeof(cg_match), relative_cg_path, pid);
 
@@ -206,68 +213,67 @@ void cleanup_iptables(void) {
     snprintf(mark_match, sizeof(mark_match), "-m mark --mark 0x%x", pid + 10000);
 
     if (g_ctx.mode == MODE_REDIRECT) {
-        char out4_chain[128], out6_chain[128];
-        snprintf(out4_chain, sizeof(out4_chain), "CP_RD_OUT_%d", pid);
-        snprintf(out6_chain, sizeof(out6_chain), "CP6_RD_OUT_%d", pid);
+        char out4[128], out6[128];
+        snprintf(out4, sizeof(out4), "CP_RD_OUT_%d", pid);
+        snprintf(out6, sizeof(out6), "CP6_RD_OUT_%d", pid);
 
-        run_cmd_silent("iptables -w -t nat -D OUTPUT %s -j %s", cg_match, out4_chain);
-        run_cmd_silent("iptables -w -t nat -F %s", out4_chain);
-        run_cmd_silent("iptables -w -t nat -X %s", out4_chain);
+        run_cmd_silent("iptables -w -t nat -D OUTPUT %s -j %s", cg_match, out4);
+        run_cmd_silent("iptables -w -t nat -F %s", out4);
+        run_cmd_silent("iptables -w -t nat -X %s", out4);
 
-        run_cmd_silent("ip6tables -w -t raw -D OUTPUT %s -j %s", cg_match, out6_chain);
-        run_cmd_silent("ip6tables -w -t raw -F %s", out6_chain);
-        run_cmd_silent("ip6tables -w -t raw -X %s", out6_chain);
+        run_cmd_silent("ip6tables -w -t raw -D OUTPUT %s -j %s", cg_match, out6);
+        run_cmd_silent("ip6tables -w -t raw -F %s", out6);
+        run_cmd_silent("ip6tables -w -t raw -X %s", out6);
     } else if (g_ctx.mode == MODE_TPROXY) {
-        char out4_chain[128], pre4_chain[128], out6_chain[128], pre6_chain[128], dns4_chain[128];
-        snprintf(out4_chain, sizeof(out4_chain), "CP_TP_OUT_%d", pid);
-        snprintf(pre4_chain, sizeof(pre4_chain), "CP_TP_PRE_%d", pid);
-        snprintf(out6_chain, sizeof(out6_chain), "CP6_TP_OUT_%d", pid);
-        snprintf(pre6_chain, sizeof(pre6_chain), "CP6_TP_PRE_%d", pid);
-        snprintf(dns4_chain, sizeof(dns4_chain), "CP_TP_DNS_%d", pid);
+        char out4[128], pre4[128], out6[128], pre6[128];
+        snprintf(out4, sizeof(out4), "CP_TP_OUT_%d", pid);
+        snprintf(pre4, sizeof(pre4), "CP_TP_PRE_%d", pid);
+        snprintf(out6, sizeof(out6), "CP6_TP_OUT_%d", pid);
+        snprintf(pre6, sizeof(pre6), "CP6_TP_PRE_%d", pid);
 
-        run_cmd_silent("iptables -w -t mangle -D PREROUTING %s -j %s", mark_match, pre4_chain);
-        run_cmd_silent("iptables -w -t mangle -F %s", pre4_chain);
-        run_cmd_silent("iptables -w -t mangle -X %s", pre4_chain);
+        run_cmd_silent("iptables -w -t mangle -D PREROUTING %s -j %s", mark_match, pre4);
+        run_cmd_silent("iptables -w -t mangle -F %s", pre4);
+        run_cmd_silent("iptables -w -t mangle -X %s", pre4);
 
-        run_cmd_silent("iptables -w -t mangle -D OUTPUT %s -j %s", cg_match, out4_chain);
-        run_cmd_silent("iptables -w -t mangle -F %s", out4_chain);
-        run_cmd_silent("iptables -w -t mangle -X %s", out4_chain);
+        run_cmd_silent("iptables -w -t mangle -D OUTPUT %s -j %s", cg_match, out4);
+        run_cmd_silent("iptables -w -t mangle -F %s", out4);
+        run_cmd_silent("iptables -w -t mangle -X %s", out4);
 
-        run_cmd_silent("ip6tables -w -t mangle -D PREROUTING %s -j %s", mark_match, pre6_chain);
-        run_cmd_silent("ip6tables -w -t mangle -F %s", pre6_chain);
-        run_cmd_silent("ip6tables -w -t mangle -X %s", pre6_chain);
+        run_cmd_silent("ip6tables -w -t mangle -D PREROUTING %s -j %s", mark_match, pre6);
+        run_cmd_silent("ip6tables -w -t mangle -F %s", pre6);
+        run_cmd_silent("ip6tables -w -t mangle -X %s", pre6);
 
-        run_cmd_silent("ip6tables -w -t mangle -D OUTPUT %s -j %s", cg_match, out6_chain);
-        run_cmd_silent("ip6tables -w -t mangle -F %s", out6_chain);
-        run_cmd_silent("ip6tables -w -t mangle -X %s", out6_chain);
+        run_cmd_silent("ip6tables -w -t mangle -D OUTPUT %s -j %s", cg_match, out6);
+        run_cmd_silent("ip6tables -w -t mangle -F %s", out6);
+        run_cmd_silent("ip6tables -w -t mangle -X %s", out6);
 
         if (g_ctx.has_override_dns) {
-            char dns4_chain[128], dns6_chain[128];
-            snprintf(dns4_chain, sizeof(dns4_chain), "CP_TP_DNS_%d", pid);
-            snprintf(dns6_chain, sizeof(dns6_chain), "CP6_TP_DNS_%d", pid);
+            char dns4[128], dns6[128];
+            snprintf(dns4, sizeof(dns4), "CP_TP_DNS_%d", pid);
+            snprintf(dns6, sizeof(dns6), "CP6_TP_DNS_%d", pid);
 
-            run_cmd_silent("iptables -w -t nat -D OUTPUT %s -j %s", cg_match, dns4_chain);
-            run_cmd_silent("iptables -w -t nat -F %s", dns4_chain);
-            run_cmd_silent("iptables -w -t nat -X %s", dns4_chain);
+            run_cmd_silent("iptables -w -t nat -D OUTPUT %s -j %s", cg_match, dns4);
+            run_cmd_silent("iptables -w -t nat -F %s", dns4);
+            run_cmd_silent("iptables -w -t nat -X %s", dns4);
 
-            run_cmd_silent("ip6tables -w -t nat -D OUTPUT %s -j %s", cg_match, dns6_chain);
-            run_cmd_silent("ip6tables -w -t nat -F %s", dns6_chain);
-            run_cmd_silent("ip6tables -w -t nat -X %s", dns6_chain);
+            run_cmd_silent("ip6tables -w -t nat -D OUTPUT %s -j %s", cg_match, dns6);
+            run_cmd_silent("ip6tables -w -t nat -F %s", dns6);
+            run_cmd_silent("ip6tables -w -t nat -X %s", dns6);
         }
 
         cleanup_tproxy_routing(g_ctx.tproxy_mark, AF_INET);
         cleanup_tproxy_routing(g_ctx.tproxy_mark, AF_INET6);
     } else if (g_ctx.mode == MODE_TRACE) {
-        char out4_chain[128], out6_chain[128];
-        snprintf(out4_chain, sizeof(out4_chain), "CP_TR_OUT_%d", pid);
-        snprintf(out6_chain, sizeof(out6_chain), "CP6_TR_OUT_%d", pid);
+        char out4[128], out6[128];
+        snprintf(out4, sizeof(out4), "CP_TR_OUT_%d", pid);
+        snprintf(out6, sizeof(out6), "CP6_TR_OUT_%d", pid);
 
-        run_cmd_silent("iptables -w -t raw -D OUTPUT %s -j %s", cg_match, out4_chain);
-        run_cmd_silent("iptables -w -t raw -F %s", out4_chain);
-        run_cmd_silent("iptables -w -t raw -X %s", out4_chain);
+        run_cmd_silent("iptables -w -t raw -D OUTPUT %s -j %s", cg_match, out4);
+        run_cmd_silent("iptables -w -t raw -F %s", out4);
+        run_cmd_silent("iptables -w -t raw -X %s", out4);
 
-        run_cmd_silent("ip6tables -w -t raw -D OUTPUT %s -j %s", cg_match, out6_chain);
-        run_cmd_silent("ip6tables -w -t raw -F %s", out6_chain);
-        run_cmd_silent("ip6tables -w -t raw -X %s", out6_chain);
+        run_cmd_silent("ip6tables -w -t raw -D OUTPUT %s -j %s", cg_match, out6);
+        run_cmd_silent("ip6tables -w -t raw -F %s", out6);
+        run_cmd_silent("ip6tables -w -t raw -X %s", out6);
     }
 }
