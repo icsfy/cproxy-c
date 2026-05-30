@@ -419,6 +419,7 @@ int main(int argc, char *argv[]) {
     char override_dns[64] = {0};
     char bypass_str[512] = {0};
     pid_t target_pid = 0;
+    int status = 0;
 
     struct option long_options[] = {
         {"port", required_argument, 0, 'p'},
@@ -594,25 +595,25 @@ int main(int argc, char *argv[]) {
             }
             sleep(1);
         }
-        printf("Terminating...\n");
-        return 0;
-    }
+    } else {
+        if (write(pipefd[1], "A", 1) != 1) {
+            perror("Failed to synchronize with child");
+        }
+        close(pipefd[1]);
 
-    if (write(pipefd[1], "A", 1) != 1) {
-        perror("Failed to synchronize with child");
-    }
-    close(pipefd[1]);
-
-    int status;
-    while (waitpid(child_pid, &status, 0) == -1) {
-        if (errno == EINTR && g_keep_running == 0) {
-            kill(child_pid, SIGINT);
+        while (waitpid(child_pid, &status, 0) == -1) {
+            if (errno == EINTR && g_keep_running == 0) {
+                kill(child_pid, SIGINT);
+            }
         }
     }
 
+    // Wait for all processes in the cgroup to exit (e.g., descendants)
     while (g_keep_running && !is_cgroup_empty()) {
         sleep(1);
     }
+
+    if (target_pid > 0) return 0;
 
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     else if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);

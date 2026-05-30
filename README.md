@@ -26,12 +26,19 @@ Requires `gcc` and `make`.
 
 ```bash
 make
+sudo make install
 ```
-This will compile the project with strict flags (`-Wall -Wextra -Werror -O2`) into a single `cproxy` binary.
+By default, it installs to `/usr/local/bin`. You can customize the location:
+```bash
+sudo make install PREFIX=/usr
+```
 
 ## Usage
 
 This tool must be run as root to modify cgroups and iptables.
+
+### IPv6 Note
+Currently, `cproxy` focuses on IPv4 redirection and TProxy. For IPv6, it automatically adds rules to **drop** outbound IPv6 traffic from the proxied process to prevent leaks. Full IPv6 proxying is planned for future versions.
 
 ### Environment Variables and `sudo -E`
 By default, running `sudo` strips almost all of your personal environment variables (like custom `PATH`, `NVM_DIR`, `GOPATH`, or IDE specific variables) for security reasons. `cproxy` will automatically restore your `HOME`, `USER`, and `LOGNAME` so that standard tools like `docker` or `git` work correctly.
