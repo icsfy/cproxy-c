@@ -46,6 +46,29 @@ void run_cmd_silent(const char *cmd) {
     if (system(cmd)) {}
 }
 
+void apply_bypass_rules(const char* bypass_str, const char* chain, const char* table) {
+    if (!bypass_str || strlen(bypass_str) == 0) return;
+    
+    char bypass_copy[512];
+    strncpy(bypass_copy, bypass_str, sizeof(bypass_copy) - 1);
+    bypass_copy[sizeof(bypass_copy) - 1] = '\0';
+    
+    char cmd[1024];
+    char* token = strtok(bypass_copy, ",");
+    while (token != NULL) {
+        // Strip leading/trailing spaces if any
+        while(*token == ' ') token++;
+        char* end = token + strlen(token) - 1;
+        while(end > token && *end == ' ') *end-- = '\0';
+        
+        if (strlen(token) > 0) {
+            snprintf(cmd, sizeof(cmd), "iptables -w -t %s -A %s -d %s -j RETURN", table, chain, token);
+            run_cmd(cmd);
+        }
+        token = strtok(NULL, ",");
+    }
+}
+
 void cleanup(void) {
     static int cleaned_up = 0;
     if (cleaned_up) return;
@@ -150,7 +173,7 @@ int setup_cgroup(pid_t pid, const char *cg_base) {
     return 0;
 }
 
-void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, const char* cgroup_path) {
+void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_rd_out_%d", pid);
     char cmd[1024];
 
@@ -158,6 +181,9 @@ void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, c
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
+
+    // Apply bypass rules before REDIRECT
+    apply_bypass_rules(bypass_str, g_output_chain, "nat");
 
     // Block IPv6 leaks
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
@@ -178,7 +204,7 @@ void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, c
     }
 }
 
-void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is_v2, const char* cgroup_path) {
+void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
     g_tproxy_mark = pid;
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tp_out_%d", pid);
     snprintf(g_prerouting_chain, sizeof(g_prerouting_chain), "cp_tp_pre_%d", pid);
@@ -194,6 +220,7 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A PREROUTING -j %s", g_prerouting_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -o lo -j RETURN", g_prerouting_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -o lo -j RETURN", g_prerouting_chain); run_cmd(cmd);
+    apply_bypass_rules(bypass_str, g_prerouting_chain, "mangle"); // Bypass in PREROUTING
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port); run_cmd(cmd);
 
@@ -202,6 +229,7 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
+    apply_bypass_rules(bypass_str, g_output_chain, "mangle"); // Bypass in OUTPUT
 
     if (override_dns && strlen(override_dns) > 0) {
         g_has_override_dns = 1;
@@ -231,12 +259,15 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     }
 }
 
-void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path) {
+void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const char* bypass_str) {
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tr_out_%d", pid);
     char cmd[1024];
 
     snprintf(cmd, sizeof(cmd), "iptables -w -t raw -N %s", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t raw -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
+
+    // Apply bypass rules before LOG
+    apply_bypass_rules(bypass_str, g_output_chain, "raw");
 
     // IPv6 Trace
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
@@ -284,6 +315,7 @@ int main(int argc, char *argv[]) {
     int redirect_dns = 0;
     char mode_str[32] = "redirect";
     char override_dns[64] = {0};
+    char bypass_str[512] = {0};
     pid_t target_pid = 0;
 
     struct option long_options[] = {
@@ -292,12 +324,13 @@ int main(int argc, char *argv[]) {
         {"mode", required_argument, 0, 'm'},
         {"override-dns", required_argument, 0, 'o'},
         {"pid", required_argument, 0, 'i'},
+        {"bypass", required_argument, 0, 'b'},
         {0, 0, 0, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:dm:o:i:", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'p': port = atoi(optarg); break;
             case 'd': redirect_dns = 1; break;
@@ -311,8 +344,9 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 'i': target_pid = atoi(optarg); break;
+            case 'b': strncpy(bypass_str, optarg, sizeof(bypass_str)-1); break;
             default:
-                fprintf(stderr, "Usage: %s [--port <port>] [--mode redirect|tproxy|trace] [--pid <pid>] -- <command...>\n", argv[0]);
+                fprintf(stderr, "Usage: %s [--port <port>] [--mode redirect|tproxy|trace] [--pid <pid>] [--bypass <IPs>] -- <command...>\n", argv[0]);
                 return 1;
         }
     }
@@ -360,11 +394,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (g_mode == MODE_REDIRECT) {
-        setup_iptables_redirect(process_to_proxy, port, redirect_dns, is_v2, relative_cg_path);
+        setup_iptables_redirect(process_to_proxy, port, redirect_dns, is_v2, relative_cg_path, bypass_str);
     } else if (g_mode == MODE_TPROXY) {
-        setup_iptables_tproxy(process_to_proxy, port, override_dns, is_v2, relative_cg_path);
+        setup_iptables_tproxy(process_to_proxy, port, override_dns, is_v2, relative_cg_path, bypass_str);
     } else if (g_mode == MODE_TRACE) {
-        setup_iptables_trace(process_to_proxy, is_v2, relative_cg_path);
+        setup_iptables_trace(process_to_proxy, is_v2, relative_cg_path, bypass_str);
     }
 
     if (target_pid > 0) {
