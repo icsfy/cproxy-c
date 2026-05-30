@@ -335,12 +335,16 @@ static void cleanup_stale_ip_rules(void) {
 
         char line[512];
         while (fgets(line, sizeof(line), fp)) {
-            unsigned int mark, table;
-            // Matches: "1000: from all fwmark 0x2710 lookup 10000"
-            if (sscanf(line, "%*d: from all fwmark 0x%x lookup %u", &mark, &table) == 2) {
-                if (mark == table && mark >= 10000) {
-                    run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table);
-                    run_cmd_silent("%s route flush table %u", cmds[i], table);
+            unsigned int mark = 0, table = 0;
+            char *p;
+            // Handle both "lookup" and "table" keywords which are synonyms in ip-rule
+            if ((p = strstr(line, "fwmark 0x")) && sscanf(p + 9, "%x", &mark) == 1) {
+                if (((p = strstr(line, "lookup ")) && sscanf(p + 7, "%u", &table) == 1) ||
+                    ((p = strstr(line, "table ")) && sscanf(p + 6, "%u", &table) == 1)) {
+                    if (mark == table && mark >= 10000) {
+                        run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table);
+                        run_cmd_silent("%s route flush table %u", cmds[i], table);
+                    }
                 }
             }
         }

@@ -19,6 +19,9 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+test: $(TARGET)
+	./test.sh
+
 install: $(TARGET)
 	install -D -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 
