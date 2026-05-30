@@ -17,12 +17,13 @@
 #include <fcntl.h>
 #include <limits.h>
 
-#define CPROXY_VERSION "1.1.0"
+#define CPROXY_VERSION "1.1.1"
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
 // Global state for cleanup
 volatile sig_atomic_t g_keep_running = 1;
+int g_verbose = 0;
 int g_cgroup_created = 0;
 int g_is_v2 = 0;
 char g_cgroup_path[PATH_MAX] = {0};
@@ -58,12 +59,15 @@ int is_valid_bypass_str(const char* str) {
     char* token = strtok_r(copy, ",", &saveptr);
     while (token != NULL) {
         while (*token == ' ') token++;
-        char* end = token + strlen(token) - 1;
-        while (end > token && *end == ' ') *end-- = '\0';
+        size_t len = strlen(token);
+        while (len > 0 && token[len-1] == ' ') {
+            token[len-1] = '\0';
+            len--;
+        }
 
-        if (strlen(token) > 0) {
+        if (len > 0) {
             char part[512];
-            if (strlen(token) >= sizeof(part)) {
+            if (len >= sizeof(part)) {
                 valid = 0;
                 break;
             }
@@ -71,8 +75,11 @@ int is_valid_bypass_str(const char* str) {
             char* slash = strchr(part, '/');
             if (slash) {
                 *slash = '\0';
-                int mask = atoi(slash + 1);
-                if (is_valid_ipv4(part)) {
+                char *endptr;
+                long mask = strtol(slash + 1, &endptr, 10);
+                if (*(slash + 1) == '\0' || *endptr != '\0') {
+                    valid = 0;
+                } else if (is_valid_ipv4(part)) {
                     if (mask < 0 || mask > 32) valid = 0;
                 } else if (is_valid_ipv6(part)) {
                     if (mask < 0 || mask > 128) valid = 0;
@@ -100,9 +107,13 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         return -1;
     }
 
+    if (g_verbose) {
+        printf("[DEBUG] Executing: %s\n", cmd_buf);
+    }
+
     pid_t pid = fork();
     if (pid == 0) {
-        if (silent) {
+        if (silent && !g_verbose) {
             int devnull = open("/dev/null", O_WRONLY);
             if (devnull != -1) {
                 dup2(devnull, STDOUT_FILENO);
@@ -116,7 +127,7 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         int status;
         waitpid(pid, &status, 0);
         if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-            if (!silent) {
+            if (!silent || g_verbose) {
                 if (WIFEXITED(status)) {
                     fprintf(stderr, "Error: Command returned %d: %s\n", WEXITSTATUS(status), cmd_buf);
                 } else {
@@ -127,7 +138,7 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         }
         return 0;
     } else {
-        if (!silent) perror("fork failed");
+        if (!silent || g_verbose) perror("fork failed");
         return -1;
     }
 }
@@ -524,6 +535,7 @@ int main(int argc, char *argv[]) {
         {"override-dns", required_argument, 0, 'o'},
         {"pid", required_argument, 0, 'i'},
         {"bypass", required_argument, 0, 'b'},
+        {"verbose", no_argument, 0, 'V'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
@@ -531,7 +543,7 @@ int main(int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:hv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:Vhv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v':
                 printf("cproxy version %s\n", CPROXY_VERSION);
@@ -545,12 +557,14 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "  -o, --override-dns <ip>   Override DNS in tproxy mode (IPv4 only)\n");
                 fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
+                fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
                 fprintf(stderr, "  -v, --version             Show version information\n");
                 fprintf(stderr, "  -h, --help                Show this help message\n");
                 return 0;
             case 'p': port = atoi(optarg); break;
             case 'd': redirect_dns = 1; break;
             case 'm': snprintf(mode_str, sizeof(mode_str), "%s", optarg); break;
+            case 'V': g_verbose = 1; break;
             case 'o':
                 if (is_valid_ipv4(optarg)) {
                     snprintf(override_dns, sizeof(override_dns), "%s", optarg);
@@ -609,6 +623,11 @@ int main(int argc, char *argv[]) {
     if (stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0) {
         g_is_v2 = 1;
         cg_base = "/sys/fs/cgroup";
+    } else {
+        if (stat(cg_base, &st) != 0) {
+            fprintf(stderr, "Error: Cgroup v1 net_cls controller not found at %s. Please ensure cgroups are mounted.\n", cg_base);
+            return 1;
+        }
     }
 
     int pipefd[2];
@@ -733,8 +752,14 @@ int main(int argc, char *argv[]) {
     }
 
     // Wait for all processes in the cgroup to exit (e.g., descendants)
-    while (g_keep_running && !is_cgroup_empty()) {
-        sleep(1);
+    // We wait up to 10 seconds if g_keep_running is 0, or indefinitely if still running
+    int wait_timeout = 100; // 10s total with 100ms steps
+    while (!is_cgroup_empty()) {
+        if (!g_keep_running && wait_timeout-- <= 0) {
+            if (g_verbose) fprintf(stderr, "[DEBUG] Timeout waiting for cgroup to be empty.\n");
+            break;
+        }
+        usleep(100000);
     }
 
     if (bypass_str) free(bypass_str);

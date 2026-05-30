@@ -18,6 +18,7 @@ This C version achieves feature parity with the core functionalities (Redirect, 
 - **Trace Mode:** Trace application network activity using iptables LOG target.
 - **Proxy Existing Processes:** Attach to an existing PID and proxy its traffic.
 - **IP Bypass:** Ignore specific IP ranges (like local LANs) to prevent routing loops and proxying internal traffic.
+- **Verbose Output:** Detailed debug information and executed commands with the `--verbose` flag.
 - **Lightweight:** Minimal memory footprint, zero external dependencies, and lightning-fast execution.
 
 ## Compilation
