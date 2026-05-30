@@ -1,0 +1,25 @@
+# Compiled object files
+*.o
+*.a
+*.so
+*.so.*
+
+# Executables
+cproxy
+cproxy-c
+*.out
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
