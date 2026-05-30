@@ -90,10 +90,11 @@ static int setup_redirect(pid_t pid, const char *cg_match) {
         CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j RETURN", out4));
     }
 
-    CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out4, g_ctx.port));
     if (g_ctx.redirect_dns) {
-        CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.port));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
     }
+    CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out4, g_ctx.port));
 
     CHECK(init_chain("raw", out6, "OUTPUT", "ip6tables", cg_match));
     CHECK(apply_bypass_rules(out6, "raw", "ip6tables"));
@@ -115,8 +116,15 @@ static int setup_tproxy(pid_t pid, const char *cg_match, const char *mark_match)
 
     CHECK(init_chain("mangle", pre4, "PREROUTING", "iptables", mark_match));
     CHECK(apply_bypass_rules(pre4, "mangle", "iptables"));
-    CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
-    CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
+    if (g_ctx.dns_port != g_ctx.port) {
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.dns_port));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.dns_port));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp ! --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp ! --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
+    } else {
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
+        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
+    }
 
     CHECK(init_chain("mangle", out4, "OUTPUT", "iptables", cg_match));
     CHECK(apply_bypass_rules(out4, "mangle", "iptables"));
@@ -127,8 +135,15 @@ static int setup_tproxy(pid_t pid, const char *cg_match, const char *mark_match)
 
     CHECK(init_chain("mangle", pre6, "PREROUTING", "ip6tables", mark_match));
     CHECK(apply_bypass_rules(pre6, "mangle", "ip6tables"));
-    CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
-    CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
+    if (g_ctx.dns_port != g_ctx.port) {
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.dns_port));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.dns_port));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp ! --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp ! --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
+    } else {
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
+        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
+    }
 
     CHECK(init_chain("mangle", out6, "OUTPUT", "ip6tables", cg_match));
     CHECK(apply_bypass_rules(out6, "mangle", "ip6tables"));
@@ -284,6 +299,29 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     }
 }
 
+static void cleanup_stale_ip_rules(void) {
+    const char* cmds[] = {"ip", "ip -6"};
+    for (int i = 0; i < 2; i++) {
+        char list_cmd[64];
+        snprintf(list_cmd, sizeof(list_cmd), "%s rule show", cmds[i]);
+        FILE *fp = popen(list_cmd, "r");
+        if (!fp) continue;
+
+        char line[512];
+        while (fgets(line, sizeof(line), fp)) {
+            unsigned int mark, table;
+            // Matches: "1000: from all fwmark 0x2710 lookup 10000"
+            if (sscanf(line, "%*d: from all fwmark 0x%x lookup %u", &mark, &table) == 2) {
+                if (mark == table && mark >= 10000) {
+                    run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table);
+                    run_cmd_silent("%s route flush table %u", cmds[i], table);
+                }
+            }
+        }
+        pclose(fp);
+    }
+}
+
 void cleanup_stale_iptables(void) {
     const char *tables[] = {"nat", "mangle", "raw", "filter"};
     for (int i = 0; i < 4; i++) {
@@ -291,9 +329,6 @@ void cleanup_stale_iptables(void) {
         cleanup_chains_in_table(tables[i], "ip6tables");
     }
 
-    // Also cleanup ip rules/routes (marks 10000-65535 are likely ours)
-    // For simplicity, we can't easily guess which marks are stale without a list.
-    // But we can try to find rules that point to tables that have 'local' routes on 'lo'.
-    // A better way is to just leave them if they don't conflict, or if we had a fixed range.
+    cleanup_stale_ip_rules();
 }
 
