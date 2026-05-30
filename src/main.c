@@ -38,22 +38,6 @@ void cleanup(void) {
 }
 
 int main(int argc, char *argv[]) {
-    if (getuid() != 0) {
-        fprintf(stderr, "Error: cproxy must be run as root (use sudo)\n");
-        return 1;
-    }
-
-    if (check_dependencies() != 0) return 1;
-
-    atexit(cleanup);
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sig_handler;
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGQUIT, &sa, NULL);
-    sigaction(SIGHUP, &sa, NULL);
-
     char mode_str[32] = "redirect";
     pid_t target_pid = 0;
     int status = 0;
@@ -127,7 +111,7 @@ int main(int argc, char *argv[]) {
                         char *old = g_ctx.bypass_str;
                         if (asprintf(&g_ctx.bypass_str, "%s,%s", old, optarg) == -1) {
                             perror("asprintf failed");
-                            g_ctx.bypass_str = old; // Restore to avoid double free if we were to handle it differently, but here we exit
+                            g_ctx.bypass_str = old; 
                             ret = 1; goto cleanup_all;
                         }
                         free(old);
@@ -146,6 +130,22 @@ int main(int argc, char *argv[]) {
             default: return 1;
         }
     }
+
+    if (!g_ctx.dry_run && getuid() != 0) {
+        fprintf(stderr, "Error: cproxy must be run as root (use sudo)\n");
+        return 1;
+    }
+
+    if (check_dependencies() != 0) return 1;
+
+    atexit(cleanup);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sig_handler;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
 
     if (strcmp(mode_str, "redirect") == 0) g_ctx.mode = MODE_REDIRECT;
     else if (strcmp(mode_str, "tproxy") == 0) g_ctx.mode = MODE_TPROXY;
