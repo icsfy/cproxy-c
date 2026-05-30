@@ -232,9 +232,10 @@ void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, c
     // Apply bypass rules before REDIRECT
     apply_bypass_rules(bypass_str, g_output_chain, "nat");
 
-    // Block IPv6 leaks
+    // Block IPv6 leaks (but allow loopback)
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
+    snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A %s -o lo -j RETURN 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
 
     if (is_v2) {
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -m cgroup --path %s -j REDIRECT --to-ports %d", g_output_chain, cgroup_path, port); run_cmd(cmd);
@@ -283,9 +284,10 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo -j RETURN", g_output_chain); run_cmd(cmd);
     }
 
-    // Block IPv6 leaks
+    // Block IPv6 leaks (but allow loopback)
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
+    snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A %s -o lo -j RETURN 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
 
     if (is_v2) {
         snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -m cgroup --path %s -j MARK --set-mark %d", g_output_chain, cgroup_path, g_tproxy_mark); run_cmd(cmd);
