@@ -286,57 +286,70 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     FILE *fp = popen(cmd, "r");
     if (!fp) return;
 
-    char line[512];
-    // Use a linked list or just process in two passes to avoid missing chains
-    // For simplicity and safety, we'll collect names of stale chains first
-    char **stale_chains = NULL;
-    int count = 0;
-    int capacity = 0;
+    // First pass: Collect all rules and identify stale chains
+    char **all_rules = NULL;
+    int rule_count = 0;
+    int rule_capacity = 0;
 
+    char **stale_chains = NULL;
+    int stale_count = 0;
+    int stale_capacity = 0;
+
+    char line[512];
     while (fgets(line, sizeof(line), fp)) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+
+        if (rule_count >= rule_capacity) {
+            rule_capacity = rule_capacity == 0 ? 64 : rule_capacity * 2;
+            all_rules = realloc(all_rules, rule_capacity * sizeof(char *));
+        }
+        all_rules[rule_count++] = strdup(line);
+
         if (strncmp(line, "-N CP", 5) == 0) {
             char name[64];
-            if (sscanf(line + 3, "%63s", name) != 1) continue;
-
-            // Extract PID
-            char *last_underscore = strrchr(name, '_');
-            if (!last_underscore) continue;
-
-            pid_t pid = (pid_t)strtol(last_underscore + 1, NULL, 10);
-            if (pid > 0 && is_pid_alive(pid)) {
-                // PID is alive, not stale
-                continue;
+            if (sscanf(line + 3, "%63s", name) == 1) {
+                char *last_underscore = strrchr(name, '_');
+                if (last_underscore) {
+                    pid_t pid = (pid_t)strtol(last_underscore + 1, NULL, 10);
+                    if (pid > 0 && !is_pid_alive(pid)) {
+                        if (stale_count >= stale_capacity) {
+                            stale_capacity = stale_capacity == 0 ? 16 : stale_capacity * 2;
+                            stale_chains = realloc(stale_chains, stale_capacity * sizeof(char *));
+                        }
+                        stale_chains[stale_count++] = strdup(name);
+                    }
+                }
             }
-
-            if (count >= capacity) {
-                capacity = capacity == 0 ? 16 : capacity * 2;
-                stale_chains = realloc(stale_chains, capacity * sizeof(char *));
-            }
-            stale_chains[count++] = strdup(name);
         }
     }
     pclose(fp);
 
-    for (int i = 0; i < count; i++) {
+    if (stale_count == 0) {
+        for (int i = 0; i < rule_count; i++) free(all_rules[i]);
+        free(all_rules);
+        return;
+    }
+
+    // Second pass: Delete references to stale chains
+    for (int i = 0; i < stale_count; i++) {
         log_debug("Cleaning up stale chain %s in table %s", stale_chains[i], table);
-        // Find where this chain is referenced
-        snprintf(cmd, sizeof(cmd), "%s -t %s -S", iptables_cmd, table);
-        fp = popen(cmd, "r");
-        if (fp) {
-            while (fgets(line, sizeof(line), fp)) {
-                if (strstr(line, stale_chains[i]) && strncmp(line, "-A ", 3) == 0) {
-                    char *rule = line + 3;
-                    char *newline = strchr(rule, '\n');
-                    if (newline) *newline = '\0';
-                    run_cmd_silent("%s -t %s -D %s", iptables_cmd, table, rule);
-                }
+        for (int j = 0; j < rule_count; j++) {
+            if (strncmp(all_rules[j], "-A ", 3) == 0 && strstr(all_rules[j], stale_chains[i])) {
+                run_cmd_silent("%s -t %s -D %s", iptables_cmd, table, all_rules[j] + 3);
             }
-            pclose(fp);
         }
+    }
+
+    // Final pass: Flush and delete stale chains
+    for (int i = 0; i < stale_count; i++) {
         run_cmd_silent("%s -t %s -F %s", iptables_cmd, table, stale_chains[i]);
         run_cmd_silent("%s -t %s -X %s", iptables_cmd, table, stale_chains[i]);
         free(stale_chains[i]);
     }
+
+    for (int i = 0; i < rule_count; i++) free(all_rules[i]);
+    free(all_rules);
     free(stale_chains);
 }
 

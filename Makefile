@@ -22,6 +22,9 @@ $(TARGET): $(OBJS)
 test: $(TARGET)
 	./test.sh
 
+e2e: $(TARGET)
+	./e2e_test.sh
+
 install: $(TARGET)
 	install -D -m 0755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
 
