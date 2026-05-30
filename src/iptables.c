@@ -198,7 +198,7 @@ int setup_iptables(pid_t pid) {
 
         CHECK(init_chain("raw", out6, "OUTPUT", "ip6tables", cg_match));
         CHECK(apply_bypass_rules(g_ctx.bypass_str, out6, "raw", "ip6tables"));
-        run_cmd_silent("ip6tables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out6);
+        CHECK(run_cmd("ip6tables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out6));
     }
     return 0;
 }

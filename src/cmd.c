@@ -29,17 +29,29 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         _exit(127);
     } else if (pid > 0) {
         int status;
-        waitpid(pid, &status, 0);
-
-        if (g_ctx.verbose) {
-            double end = get_time_ms();
-            log_debug("Command took %.2fms, exit code: %d", end - start, WEXITSTATUS(status));
+        if (waitpid(pid, &status, 0) == -1) {
+            if (!silent || g_ctx.verbose) perror("waitpid failed");
+            return -1;
         }
 
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        if (g_ctx.verbose) {
+            double end = get_time_ms();
+            if (WIFEXITED(status)) {
+                log_debug("Command took %.2fms, exit code: %d", end - start, exit_code);
+            } else if (WIFSIGNALED(status)) {
+                log_debug("Command took %.2fms, terminated by signal: %d", end - start, WTERMSIG(status));
+            } else {
+                log_debug("Command took %.2fms, terminated abnormally", end - start);
+            }
+        }
+
+        if (exit_code != 0) {
             if (!silent || g_ctx.verbose) {
                 if (WIFEXITED(status)) {
-                    log_error("Command returned %d: %s", WEXITSTATUS(status), cmd_buf);
+                    log_error("Command returned %d: %s", exit_code, cmd_buf);
+                } else if (WIFSIGNALED(status)) {
+                    log_error("Command killed by signal %d: %s", WTERMSIG(status), cmd_buf);
                 } else {
                     log_error("Command failed: %s", cmd_buf);
                 }

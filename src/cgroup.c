@@ -71,7 +71,7 @@ int is_cgroup_empty(void) {
     char buf[32];
     int empty = 1;
     while (fgets(buf, sizeof(buf), f) != NULL) {
-        if (atoi(buf) > 0) {
+        if (strtol(buf, NULL, 10) > 0) {
             empty = 0;
             break;
         }
@@ -113,10 +113,10 @@ void cleanup_cgroup(void) {
                 if (f) {
                     char buf[32];
                     while (fgets(buf, sizeof(buf), f) != NULL) {
-                        int pid = atoi(buf);
+                        long pid = strtol(buf, NULL, 10);
                         if (pid > 0) {
-                            if (g_ctx.verbose) printf("[INFO] Moving PID %d back to parent cgroup\n", pid);
-                            fprintf(f_parent, "%d\n", pid);
+                            if (g_ctx.verbose) printf("[INFO] Moving PID %ld back to parent cgroup\n", pid);
+                            fprintf(f_parent, "%ld\n", pid);
                             fflush(f_parent);
                         }
                     }

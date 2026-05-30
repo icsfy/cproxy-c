@@ -35,12 +35,13 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -h, --help                Show this help message\n");
                 exit(0);
             case 'p': {
-                int p = atoi(optarg);
-                if (p <= 0 || p > 65535) {
+                char *endptr;
+                long p = strtol(optarg, &endptr, 10);
+                if (*optarg == '\0' || *endptr != '\0' || p <= 0 || p > 65535) {
                     fprintf(stderr, "Error: Invalid port: %s\n", optarg);
                     return -1;
                 }
-                ctx->port = p;
+                ctx->port = (int)p;
                 break;
             }
             case 'd': ctx->redirect_dns = true; break;
@@ -56,12 +57,13 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 }
                 break;
             case 'i': {
-                pid_t p = (pid_t)atoi(optarg);
-                if (p <= 0) {
+                char *endptr;
+                long p = strtol(optarg, &endptr, 10);
+                if (*optarg == '\0' || *endptr != '\0' || p <= 0) {
                     fprintf(stderr, "Error: Invalid PID: %s\n", optarg);
                     return -1;
                 }
-                ctx->target_pid = p;
+                ctx->target_pid = (pid_t)p;
                 break;
             }
             case 'b':

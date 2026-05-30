@@ -16,8 +16,8 @@ void drop_privileges(void) {
     char *sudo_gid_str = getenv("SUDO_GID");
 
     if (sudo_user && sudo_uid_str && sudo_gid_str) {
-        uid_t uid = (uid_t)atoi(sudo_uid_str);
-        gid_t gid = (gid_t)atoi(sudo_gid_str);
+        uid_t uid = (uid_t)strtol(sudo_uid_str, NULL, 10);
+        gid_t gid = (gid_t)strtol(sudo_gid_str, NULL, 10);
 
         struct passwd *pw = getpwuid(uid);
         if (initgroups(sudo_user, gid) != 0) {
