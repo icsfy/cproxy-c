@@ -257,6 +257,11 @@ int setup_cgroup(pid_t pid, const char *cg_base) {
 void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, const char* cgroup_path, const char* bypass_str) {
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_rd_out_%d", pid);
 
+    // Clean up any stale rules/chains from a previous crash with the same PID
+    run_cmd_silent("iptables -w -t nat -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t nat -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t nat -X %s 2>/dev/null", g_output_chain);
+
     run_cmd("iptables -w -t nat -N %s", g_output_chain);
     run_cmd("iptables -w -t nat -A OUTPUT -j %s", g_output_chain);
 
@@ -268,6 +273,9 @@ void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, c
     run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain);
 
     // Block IPv6 leaks (but allow loopback and bypassed IPs)
+    run_cmd_silent("ip6tables -w -t raw -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("ip6tables -w -t raw -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("ip6tables -w -t raw -X %s 2>/dev/null", g_output_chain);
     run_cmd_silent("ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain);
     run_cmd_silent("ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain);
 
@@ -296,11 +304,27 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tp_out_%d", pid);
     snprintf(g_prerouting_chain, sizeof(g_prerouting_chain), "cp_tp_pre_%d", pid);
 
+    // Clean up any stale rules/chains/routes from a previous crash with the same PID
+    run_cmd_silent("ip rule delete fwmark %d table %d 2>/dev/null", g_tproxy_mark, g_tproxy_mark);
+    run_cmd_silent("ip route delete local 0.0.0.0/0 dev lo table %d 2>/dev/null", g_tproxy_mark);
+
+    run_cmd_silent("iptables -w -t mangle -D PREROUTING -j %s 2>/dev/null", g_prerouting_chain);
+    run_cmd_silent("iptables -w -t mangle -F %s 2>/dev/null", g_prerouting_chain);
+    run_cmd_silent("iptables -w -t mangle -X %s 2>/dev/null", g_prerouting_chain);
+
+    run_cmd_silent("iptables -w -t mangle -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t mangle -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t mangle -X %s 2>/dev/null", g_output_chain);
+
+    run_cmd_silent("iptables -w -t nat -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t nat -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t nat -X %s 2>/dev/null", g_output_chain);
+
+    run_cmd_silent("ip6tables -w -t raw -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("ip6tables -w -t raw -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("ip6tables -w -t raw -X %s 2>/dev/null", g_output_chain);
+
     // IP Rules for TPROXY routing loop:
-    // 1. Mark packets in mangle/OUTPUT using cgroup match.
-    // 2. Routing rule directs marked packets to local loopback.
-    // 3. Packets "re-enter" via PREROUTING where TPROXY target is valid.
-    // This allows intercepting locally-generated traffic which normally bypasses PREROUTING.
     run_cmd("ip rule add fwmark %d table %d", g_tproxy_mark, g_tproxy_mark);
     run_cmd("ip route add local 0.0.0.0/0 dev lo table %d", g_tproxy_mark);
 
@@ -362,6 +386,11 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
 void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const char* bypass_str) {
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tr_out_%d", pid);
 
+    // Clean up any stale rules/chains from a previous crash with the same PID
+    run_cmd_silent("iptables -w -t raw -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t raw -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("iptables -w -t raw -X %s 2>/dev/null", g_output_chain);
+
     run_cmd("iptables -w -t raw -N %s", g_output_chain);
     run_cmd("iptables -w -t raw -A OUTPUT -j %s", g_output_chain);
 
@@ -369,6 +398,9 @@ void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const c
     apply_bypass_rules(bypass_str, g_output_chain, "raw", "iptables");
 
     // IPv6 Trace
+    run_cmd_silent("ip6tables -w -t raw -D OUTPUT -j %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("ip6tables -w -t raw -F %s 2>/dev/null", g_output_chain);
+    run_cmd_silent("ip6tables -w -t raw -X %s 2>/dev/null", g_output_chain);
     run_cmd_silent("ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain);
     run_cmd_silent("ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain);
 
@@ -407,9 +439,26 @@ int is_cgroup_empty(void) {
     return empty;
 }
 
+int check_dependencies(void) {
+    const char *deps[] = {"iptables", "ip", "ip6tables"};
+    for (size_t i = 0; i < sizeof(deps) / sizeof(deps[0]); i++) {
+        char cmd[128];
+        snprintf(cmd, sizeof(cmd), "which %s >/dev/null 2>&1", deps[i]);
+        if (system(cmd) != 0) {
+            fprintf(stderr, "Error: '%s' command not found. Please install it.\n", deps[i]);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     if (getuid() != 0) {
         fprintf(stderr, "Error: cproxy must be run as root (use sudo)\n");
+        return 1;
+    }
+
+    if (check_dependencies() != 0) {
         return 1;
     }
 
