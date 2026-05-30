@@ -107,7 +107,8 @@ int setup_iptables(pid_t pid) {
         CHECK(apply_bypass_rules(g_ctx.bypass_str, g_ctx.output_chain, "nat", "iptables"));
 
         // Exclude traffic on loopback that isn't DNS
-        CHECK(run_cmd("iptables -w -t nat -A %s -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_ctx.output_chain));
 
         if (!g_ctx.redirect_dns) {
             // Specifically bypass DNS if not redirecting
@@ -173,13 +174,15 @@ int setup_iptables(pid_t pid) {
             if (is_valid_ipv4(g_ctx.override_dns)) {
                 CHECK(init_chain("nat", dns4, "OUTPUT", "iptables", cg_match));
                 CHECK(apply_bypass_rules(g_ctx.bypass_str, dns4, "nat", "iptables"));
-                CHECK(run_cmd("iptables -w -t nat -A %s -o lo ! --dport 53 -j RETURN", dns4));
+                CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", dns4));
+                CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", dns4));
                 CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns4, g_ctx.override_dns));
                 CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns4, g_ctx.override_dns));
             } else if (is_valid_ipv6(g_ctx.override_dns)) {
                 CHECK(init_chain("nat", dns6, "OUTPUT", "ip6tables", cg_match));
                 CHECK(apply_bypass_rules(g_ctx.bypass_str, dns6, "nat", "ip6tables"));
-                CHECK(run_cmd("ip6tables -w -t nat -A %s -o lo ! --dport 53 -j RETURN", dns6));
+                CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", dns6));
+                CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", dns6));
                 CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns6, g_ctx.override_dns));
                 CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns6, g_ctx.override_dns));
             }
