@@ -18,8 +18,11 @@ This C version achieves feature parity with the core functionalities (Redirect, 
 - **Trace Mode:** Trace application network activity using iptables LOG target.
 - **Proxy Existing Processes:** Attach to an existing PID and proxy its traffic.
 - **IP Bypass:** Ignore specific IP ranges (like local LANs) to prevent routing loops and proxying internal traffic.
-- **Verbose Output:** Detailed debug information and executed commands with the `--verbose` flag.
-- **Lightweight:** Minimal memory footprint, zero external dependencies, and lightning-fast execution.
+- **Robust Process Management:** Uses a non-blocking polling mechanism (100ms) for ultra-responsive cleanup and process state monitoring.
+- **Enhanced Observability:** Detailed verbose mode with command timing and exit code tracking for easier troubleshooting.
+- **Unified Architecture:** Refactored into a context-driven design for better maintainability and lower resource overhead.
+- **Improved Security:** Hardened cgroup v2 path resolution and strict privilege-dropping checks.
+- **Microscopic Footprint:** Even with added robustness, the compiled binary remains under 50KB.
 
 ## Compilation
 
