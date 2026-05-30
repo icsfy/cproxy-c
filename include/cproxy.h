@@ -55,7 +55,6 @@ double get_time_ms(void);
 int run_cmd_v(const char *fmt, va_list args, int silent);
 int run_cmd(const char *fmt, ...);
 int run_cmd_silent(const char *fmt, ...);
-int run_cmd_status(const char *fmt, ...);
 int is_valid_ipv4(const char *ip);
 int is_valid_ipv6(const char *ip);
 int is_valid_bypass_str(const char* str);

@@ -68,28 +68,3 @@ int run_cmd_silent(const char *fmt, ...) {
     va_end(args);
     return res;
 }
-
-int run_cmd_status(const char *fmt, ...) {
-    char cmd_buf[1024];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
-    va_end(args);
-
-    pid_t pid = fork();
-    if (pid == 0) {
-        int devnull = open("/dev/null", O_WRONLY);
-        if (devnull != -1) {
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
-        }
-        execl("/bin/sh", "sh", "-c", cmd_buf, (char *)NULL);
-        _exit(127);
-    } else if (pid > 0) {
-        int status;
-        waitpid(pid, &status, 0);
-        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    }
-    return -1;
-}

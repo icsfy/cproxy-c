@@ -83,16 +83,25 @@ int main(int argc, char *argv[]) {
             log_info("Override DNS: %s", g_ctx.override_dns);
     }
 
+    bool is_attaching = (g_ctx.target_pid > 0);
     int pipefd[2] = {-1, -1};
     pid_t child_pid = 0;
-    if (g_ctx.target_pid == 0) {
-        if (pipe(pipefd) == -1) { perror("pipe failed"); return 1; }
+
+    if (!is_attaching) {
+        if (pipe(pipefd) == -1) {
+            perror("pipe failed");
+            return 1;
+        }
         child_pid = fork();
-        if (child_pid < 0) { perror("fork failed"); return 1; }
+        if (child_pid < 0) {
+            perror("fork failed");
+            return 1;
+        }
         if (child_pid == 0) {
             close(pipefd[1]);
             char sync_buf;
-            if (read(pipefd[0], &sync_buf, 1) <= 0) _exit(1);
+            if (read(pipefd[0], &sync_buf, 1) <= 0)
+                _exit(1);
             close(pipefd[0]);
 
             drop_privileges();
@@ -101,25 +110,28 @@ int main(int argc, char *argv[]) {
             snprintf(env_str, sizeof(env_str), "cproxy/%d", g_ctx.port);
             setenv("CPROXY_ENV", env_str, 1);
             execvp(argv[optind], &argv[optind]);
-            perror("execvp failed"); _exit(1);
+            perror("execvp failed");
+            _exit(1);
         }
         close(pipefd[0]);
     }
 
-    pid_t process_to_proxy = (g_ctx.target_pid > 0) ? g_ctx.target_pid : child_pid;
+    pid_t process_to_proxy = is_attaching ? g_ctx.target_pid : child_pid;
+    g_ctx.target_pid = process_to_proxy; // Ensure cleanup knows which PID to use
+
     if (setup_cgroup(process_to_proxy) != 0 || setup_iptables(process_to_proxy) != 0) {
-        if (g_ctx.target_pid == 0) close(pipefd[1]);
+        if (!is_attaching) close(pipefd[1]);
         return 1;
     }
 
-    if (g_ctx.target_pid > 0) {
+    if (is_attaching) {
         printf("Proxying PID %d. Press Ctrl+C to stop...\n", g_ctx.target_pid);
         wait_for_process(g_ctx.target_pid);
     } else {
         if (write(pipefd[1], "A", 1) != 1) perror("Sync failed");
         close(pipefd[1]);
 
-        int status;
+        int status = 0;
         while (g_keep_running) {
             int r = waitpid(child_pid, &status, 0);
             if (r == child_pid) break;
