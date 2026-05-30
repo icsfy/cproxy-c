@@ -37,6 +37,15 @@ void run_cmd_silent(const char *cmd) {
 }
 
 void cleanup(void) {
+    static int cleaned_up = 0;
+    if (cleaned_up) return;
+    cleaned_up = 1;
+
+    // Block signals during cleanup to prevent re-entrancy issues
+    sigset_t set;
+    sigfillset(&set);
+    sigprocmask(SIG_BLOCK, &set, NULL);
+
     char cmd[512];
 
     if (g_mode == MODE_REDIRECT) {
@@ -204,6 +213,25 @@ void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path) {
     }
 }
 
+int is_cgroup_empty(void) {
+    if (!g_cgroup_created || g_cgroup_path[0] == '\0') return 1;
+    char tasks_file[512];
+    snprintf(tasks_file, sizeof(tasks_file), "%s/cgroup.procs", g_cgroup_path);
+    FILE *f = fopen(tasks_file, "r");
+    if (!f) {
+        snprintf(tasks_file, sizeof(tasks_file), "%s/tasks", g_cgroup_path);
+        f = fopen(tasks_file, "r");
+        if (!f) return 1; // Can't read, assume empty/gone
+    }
+    char buf[32];
+    int empty = 1;
+    if (fgets(buf, sizeof(buf), f) != NULL) {
+        empty = 0; // Found at least one PID
+    }
+    fclose(f);
+    return empty;
+}
+
 int main(int argc, char *argv[]) {
     if (getuid() != 0) {
         fprintf(stderr, "Error: cproxy must be run as root (use sudo)\n");
@@ -344,6 +372,12 @@ int main(int argc, char *argv[]) {
                 kill(child_pid, SIGINT);
             }
         }
+        
+        // Wait for all daemonized children in the cgroup to exit
+        while (g_keep_running && !is_cgroup_empty()) {
+            sleep(1);
+        }
+
         if (WIFEXITED(status)) return WEXITSTATUS(status);
         else if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
     }
