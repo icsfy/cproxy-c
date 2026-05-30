@@ -3,7 +3,7 @@
 A lightweight, dependency-free C implementation of `cproxy` for transparently redirecting network traffic using cgroups and iptables.
 
 ## Relationship to the Original Rust Project
-This project is a complete **C language rewrite/port** of the original [cproxy](https://github.com/NOBLES5E/cproxy) (which is written in Rust). 
+This project is a complete **C language rewrite/port** of the original [cproxy](https://github.com/NOBLES5E/cproxy) (which is written in Rust).
 
 It was created to address and explore specific system-level mechanics that are complex to handle safely in Rust, specifically:
 - **Flawless Privilege Dropping:** It explicitly uses `initgroups` alongside `getpwuid` to perfectly restore a user's supplementary groups (like `docker`) and environment variables (`HOME`, `USER`) after running under `sudo`.
@@ -30,7 +30,7 @@ This will compile the project with strict flags (`-Wall -Wextra -Werror -O2`) in
 
 ## Usage
 
-This tool must be run as root to modify cgroups and iptables. 
+This tool must be run as root to modify cgroups and iptables.
 
 ### Environment Variables and `sudo -E`
 By default, running `sudo` strips almost all of your personal environment variables (like custom `PATH`, `NVM_DIR`, `GOPATH`, or IDE specific variables) for security reasons. `cproxy` will automatically restore your `HOME`, `USER`, and `LOGNAME` so that standard tools like `docker` or `git` work correctly.

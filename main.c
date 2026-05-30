@@ -81,7 +81,7 @@ void cleanup(void) {
             snprintf(cmd, sizeof(cmd), "iptables -w -t raw -X %s >/dev/null 2>&1", g_output_chain); run_cmd_silent(cmd);
         }
     }
-    
+
     if (g_cgroup_created && g_cgroup_path[0] != '\0') {
         rmdir(g_cgroup_path);
         g_cgroup_created = 0;
@@ -95,7 +95,7 @@ void sig_handler(int sig) {
 
 int setup_cgroup(pid_t pid, const char *cg_base) {
     snprintf(g_cgroup_path, sizeof(g_cgroup_path), "%s/cproxy-%d", cg_base, pid);
-    
+
     if (mkdir(g_cgroup_path, 0755) != 0) {
         if (errno != EEXIST) {
             perror("Failed to create cgroup directory");
@@ -154,9 +154,9 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     g_tproxy_mark = pid;
     snprintf(g_output_chain, sizeof(g_output_chain), "cp_tp_out_%d", pid);
     snprintf(g_prerouting_chain, sizeof(g_prerouting_chain), "cp_tp_pre_%d", pid);
-    
+
     char cmd[1024];
-    
+
     // IP Rules
     snprintf(cmd, sizeof(cmd), "ip rule add fwmark %d table %d", g_tproxy_mark, g_tproxy_mark); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "ip route add local 0.0.0.0/0 dev lo table %d", g_tproxy_mark); run_cmd(cmd);
@@ -243,7 +243,7 @@ int main(int argc, char *argv[]) {
     char mode_str[32] = "redirect";
     char override_dns[64] = {0};
     pid_t target_pid = 0;
-    
+
     struct option long_options[] = {
         {"port", required_argument, 0, 'p'},
         {"redirect-dns", no_argument, 0, 'd'},
@@ -291,9 +291,9 @@ int main(int argc, char *argv[]) {
     sigaction(SIGHUP, &sa, NULL);
 
     pid_t process_to_proxy = (target_pid > 0) ? target_pid : getpid();
-    
+
     int is_v2 = 0;
-    const char *cg_base = "/sys/fs/cgroup/net_cls"; 
+    const char *cg_base = "/sys/fs/cgroup/net_cls";
     struct stat st;
     if (stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0) {
         is_v2 = 1;
@@ -342,7 +342,7 @@ int main(int argc, char *argv[]) {
         if (sudo_user && sudo_uid_str && sudo_gid_str) {
             uid_t uid = atoi(sudo_uid_str);
             gid_t gid = atoi(sudo_gid_str);
-            
+
             if (initgroups(sudo_user, gid) != 0) perror("Warning: initgroups failed");
             if (setgid(gid) != 0) perror("setgid failed");
             if (setuid(uid) != 0) perror("setuid failed");
@@ -354,7 +354,7 @@ int main(int argc, char *argv[]) {
                 setenv("LOGNAME", pw->pw_name, 1);
             }
         }
-        
+
         char env_str[64];
         snprintf(env_str, sizeof(env_str), "cproxy/%d", port);
         setenv("CPROXY_ENV", env_str, 1);
@@ -372,7 +372,7 @@ int main(int argc, char *argv[]) {
                 kill(child_pid, SIGINT);
             }
         }
-        
+
         // Wait for all daemonized children in the cgroup to exit
         while (g_keep_running && !is_cgroup_empty()) {
             sleep(1);
