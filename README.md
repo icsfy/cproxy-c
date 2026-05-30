@@ -2,6 +2,16 @@
 
 A lightweight, dependency-free C implementation of `cproxy` for transparently redirecting network traffic using cgroups and iptables.
 
+## Relationship to the Original Rust Project
+This project is a complete **C language rewrite/port** of the original [cproxy](https://github.com/NOBLES5E/cproxy) (which is written in Rust). 
+
+It was created to address and explore specific system-level mechanics that are complex to handle safely in Rust, specifically:
+- **Flawless Privilege Dropping:** It explicitly uses `initgroups` alongside `getpwuid` to perfectly restore a user's supplementary groups (like `docker`) and environment variables (`HOME`, `USER`) after running under `sudo`.
+- **Zero External Dependencies:** It interacts directly with the Linux kernel (libc, execvp, cgroup file I/O) without requiring heavy crates or a cargo build system.
+- **Microscopic Footprint:** The compiled binary is typically under 50KB, making it ideal for extremely constrained environments.
+
+This C version achieves feature parity with the core functionalities (Redirect, TProxy, Trace) of the Rust version while acting as a proof-of-concept for stricter environment and resource management.
+
 ## Features
 - **Redirect Mode:** Redirect TCP and DNS UDP traffic.
 - **TProxy Mode:** Transparently proxy TCP and UDP traffic with optional DNS overriding.
