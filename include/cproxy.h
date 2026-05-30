@@ -34,7 +34,7 @@ typedef struct {
     pid_t target_pid;
     bool verbose;
     bool dry_run;
-    int is_v2;
+    bool is_v2;
     char cg_base[PATH_MAX];
     char cgroup_path[PATH_MAX];
     char output_chain[128];
@@ -48,6 +48,9 @@ extern Context g_ctx;
 extern volatile sig_atomic_t g_keep_running;
 
 // Util / Cmd
+void log_info(const char *fmt, ...);
+void log_error(const char *fmt, ...);
+void log_debug(const char *fmt, ...);
 double get_time_ms(void);
 int run_cmd_v(const char *fmt, va_list args, int silent);
 int run_cmd(const char *fmt, ...);
@@ -68,6 +71,11 @@ int init_chain(const char *table, const char *chain, const char *parent, const c
 int apply_bypass_rules(const char* bypass_str, const char* chain, const char* table, const char* iptables_cmd);
 int setup_iptables(pid_t pid);
 void cleanup_iptables(void);
+
+// Process / Args
+int parse_args(Context *ctx, int argc, char *argv[]);
+int wait_for_process(pid_t pid);
+void drop_privileges(void);
 
 // Cleanup
 void cleanup(void);

@@ -6,7 +6,7 @@ static int setup_tproxy_routing(int mark, int family) {
     const char *ip_cmd = (family == AF_INET6) ? "ip -6" : "ip";
     const char *any_addr = (family == AF_INET6) ? "::/0" : "0.0.0.0/0";
 
-    if (g_ctx.verbose) printf("[INFO] Setting up TProxy routing for %s (mark: 0x%x)\n",
+    if (g_ctx.verbose) log_info("Setting up TProxy routing for %s (mark: 0x%x)",
                                (family == AF_INET6) ? "IPv6" : "IPv4", mark);
 
     run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);

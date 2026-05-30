@@ -6,11 +6,11 @@ int setup_cgroup(pid_t pid) {
         return -1;
     }
 
-    if (g_ctx.verbose) printf("[INFO] Creating cgroup: %s\n", g_ctx.cgroup_path);
+    if (g_ctx.verbose) log_info("Creating cgroup: %s", g_ctx.cgroup_path);
 
     if (g_ctx.dry_run) {
-        printf("[DEBUG] Would create cgroup: %s\n", g_ctx.cgroup_path);
-        g_ctx.cgroup_created = 1;
+        log_debug("Would create cgroup: %s", g_ctx.cgroup_path);
+        g_ctx.cgroup_created = true;
         return 0;
     }
 

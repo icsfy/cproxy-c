@@ -10,7 +10,7 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
 
     double start = 0;
     if (g_ctx.verbose || g_ctx.dry_run) {
-        printf("[DEBUG] Executing: %s\n", cmd_buf);
+        log_debug("Executing: %s", cmd_buf);
         if (g_ctx.dry_run) return 0;
         start = get_time_ms();
     }
@@ -33,15 +33,15 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
 
         if (g_ctx.verbose) {
             double end = get_time_ms();
-            printf("[DEBUG] Command took %.2fms, exit code: %d\n", end - start, WEXITSTATUS(status));
+            log_debug("Command took %.2fms, exit code: %d", end - start, WEXITSTATUS(status));
         }
 
         if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
             if (!silent || g_ctx.verbose) {
                 if (WIFEXITED(status)) {
-                    fprintf(stderr, "Error: Command returned %d: %s\n", WEXITSTATUS(status), cmd_buf);
+                    log_error("Command returned %d: %s", WEXITSTATUS(status), cmd_buf);
                 } else {
-                    fprintf(stderr, "Error: Command failed: %s\n", cmd_buf);
+                    log_error("Command failed: %s", cmd_buf);
                 }
             }
             return -1;
