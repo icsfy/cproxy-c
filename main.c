@@ -12,6 +12,7 @@
 #include <getopt.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <arpa/inet.h>
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
@@ -26,21 +27,21 @@ int g_tproxy_mark = 0;
 int g_has_override_dns = 0;
 
 int is_valid_ip(const char *ip) {
-    if (!ip || strlen(ip) == 0 || strlen(ip) > 39) return 0;
-    for (int i = 0; ip[i] != '\0'; i++) {
-        if (!((ip[i] >= '0' && ip[i] <= '9') || ip[i] == '.' || ip[i] == ':')) {
-            return 0;
-        }
-    }
-    return 1;
+    if (!ip) return 0;
+    struct in_addr addr4;
+    struct in6_addr addr6;
+    if (inet_pton(AF_INET, ip, &addr4) == 1) return 1;
+    if (inet_pton(AF_INET6, ip, &addr6) == 1) return 1;
+    return 0;
 }
 
 int is_valid_bypass_str(const char* str) {
     if (!str) return 1;
     for (int i = 0; str[i] != '\0'; i++) {
         char c = str[i];
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '.' || c == ':' || c == '/' || c == ',' || c == ' ')) {
-            return 0; // Invalid character found
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') ||
+              c == '.' || c == ':' || c == '/' || c == ',' || c == ' ' || c == '-')) {
+            return 0;
         }
     }
     return 1;
@@ -48,8 +49,10 @@ int is_valid_bypass_str(const char* str) {
 
 void run_cmd(const char *cmd) {
     int ret = system(cmd);
-    if (ret != 0) {
-        fprintf(stderr, "Warning: Command returned non-zero: %s\n", cmd);
+    if (ret == -1) {
+        perror("system failed");
+    } else if (WIFEXITED(ret) && WEXITSTATUS(ret) != 0) {
+        fprintf(stderr, "Warning: Command returned %d: %s\n", WEXITSTATUS(ret), cmd);
     }
 }
 
@@ -57,7 +60,7 @@ void run_cmd_silent(const char *cmd) {
     if (system(cmd)) {}
 }
 
-void apply_bypass_rules(const char* bypass_str, const char* chain, const char* table) {
+void apply_bypass_rules(const char* bypass_str, const char* chain, const char* table, const char* iptables_cmd) {
     if (!bypass_str || strlen(bypass_str) == 0) return;
 
     char bypass_copy[512];
@@ -65,16 +68,29 @@ void apply_bypass_rules(const char* bypass_str, const char* chain, const char* t
     bypass_copy[sizeof(bypass_copy) - 1] = '\0';
 
     char cmd[1024];
+    int is_ipv6 = (strcmp(iptables_cmd, "ip6tables") == 0);
     char* token = strtok(bypass_copy, ",");
     while (token != NULL) {
-        // Strip leading/trailing spaces if any
         while(*token == ' ') token++;
         char* end = token + strlen(token) - 1;
         while(end > token && *end == ' ') *end-- = '\0';
 
         if (strlen(token) > 0) {
-            snprintf(cmd, sizeof(cmd), "iptables -w -t %s -A %s -d %s -j RETURN", table, chain, token);
-            run_cmd(cmd);
+            char ip_only[128];
+            strncpy(ip_only, token, sizeof(ip_only)-1);
+            ip_only[sizeof(ip_only)-1] = '\0';
+            char* slash = strchr(ip_only, '/');
+            if (slash) *slash = '\0';
+
+            struct in_addr addr4;
+            struct in6_addr addr6;
+            int is_this_v4 = (inet_pton(AF_INET, ip_only, &addr4) == 1);
+            int is_this_v6 = (inet_pton(AF_INET6, ip_only, &addr6) == 1);
+
+            if ((is_ipv6 && is_this_v6) || (!is_ipv6 && is_this_v4)) {
+                snprintf(cmd, sizeof(cmd), "%s -w -t %s -A %s -d %s -j RETURN", iptables_cmd, table, chain, token);
+                run_cmd(cmd);
+            }
         }
         token = strtok(NULL, ",");
     }
@@ -228,15 +244,19 @@ void setup_iptables_redirect(pid_t pid, int port, int redirect_dns, int is_v2, c
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
 
     // Apply bypass rules before REDIRECT
-    apply_bypass_rules(bypass_str, g_output_chain, "nat");
+    apply_bypass_rules(bypass_str, g_output_chain, "nat", "iptables");
 
     // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
 
-    // Block IPv6 leaks (but allow loopback)
+    // Block IPv6 leaks (but allow loopback and bypassed IPs)
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
+
+    // Apply bypass rules for IPv6 before DROP
+    apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables");
+
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A %s -o lo -j RETURN 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
 
     if (is_v2) {
@@ -268,15 +288,15 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     // Mangle PREROUTING
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -N %s", g_prerouting_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A PREROUTING -j %s", g_prerouting_chain); run_cmd(cmd);
-    apply_bypass_rules(bypass_str, g_prerouting_chain, "mangle"); // Bypass in PREROUTING
+    apply_bypass_rules(bypass_str, g_prerouting_chain, "mangle", "iptables"); // Bypass in PREROUTING
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port); run_cmd(cmd);
 
     // Mangle OUTPUT
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -N %s", g_output_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
-    
-    apply_bypass_rules(bypass_str, g_output_chain, "mangle"); // Bypass in OUTPUT
+
+    apply_bypass_rules(bypass_str, g_output_chain, "mangle", "iptables"); // Bypass in OUTPUT
 
     // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
@@ -286,17 +306,21 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
         g_has_override_dns = 1;
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -N %s", g_output_chain); run_cmd(cmd);
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
-        
-        apply_bypass_rules(bypass_str, g_output_chain, "nat"); // Allow user to bypass DNS override
+
+        apply_bypass_rules(bypass_str, g_output_chain, "nat", "iptables"); // Allow user to bypass DNS override
 
         // Bypass loopback traffic, EXCEPT DNS (port 53) to prevent local DNS leaks
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
         snprintf(cmd, sizeof(cmd), "iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", g_output_chain); run_cmd(cmd);
     }
 
-    // Block IPv6 leaks (but allow loopback)
+    // Block IPv6 leaks (but allow loopback and bypassed IPs)
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
+
+    // Apply bypass rules for IPv6 before DROP
+    apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables");
+
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A %s -o lo -j RETURN 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
 
     if (is_v2) {
@@ -326,11 +350,14 @@ void setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const c
     snprintf(cmd, sizeof(cmd), "iptables -w -t raw -A OUTPUT -j %s", g_output_chain); run_cmd(cmd);
 
     // Apply bypass rules before LOG
-    apply_bypass_rules(bypass_str, g_output_chain, "raw");
+    apply_bypass_rules(bypass_str, g_output_chain, "raw", "iptables");
 
     // IPv6 Trace
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -N %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
     snprintf(cmd, sizeof(cmd), "ip6tables -w -t raw -A OUTPUT -j %s 2>/dev/null", g_output_chain); run_cmd_silent(cmd);
+
+    // Apply bypass rules for IPv6 before LOG
+    apply_bypass_rules(bypass_str, g_output_chain, "raw", "ip6tables");
 
     if (is_v2) {
         snprintf(cmd, sizeof(cmd), "iptables -w -t raw -A %s -m cgroup --path %s -p tcp -j LOG", g_output_chain, cgroup_path); run_cmd(cmd);
@@ -384,13 +411,25 @@ int main(int argc, char *argv[]) {
         {"override-dns", required_argument, 0, 'o'},
         {"pid", required_argument, 0, 'i'},
         {"bypass", required_argument, 0, 'b'},
+        {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:h", long_options, &option_index)) != -1) {
         switch (opt) {
+            case 'h':
+                fprintf(stderr, "Usage: %s [options] -- <command...>\n", argv[0]);
+                fprintf(stderr, "Options:\n");
+                fprintf(stderr, "  -p, --port <port>         Proxy port (default: 1080)\n");
+                fprintf(stderr, "  -m, --mode <mode>         Mode: redirect (default), tproxy, trace\n");
+                fprintf(stderr, "  -d, --redirect-dns        Redirect DNS in redirect mode\n");
+                fprintf(stderr, "  -o, --override-dns <ip>   Override DNS in tproxy mode\n");
+                fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
+                fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
+                fprintf(stderr, "  -h, --help                Show this help message\n");
+                return 0;
             case 'p': port = atoi(optarg); break;
             case 'd': redirect_dns = 1; break;
             case 'm': strncpy(mode_str, optarg, sizeof(mode_str)-1); break;
@@ -412,7 +451,7 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             default:
-                fprintf(stderr, "Usage: %s [--port <port>] [--mode redirect|tproxy|trace] [--pid <pid>] [--bypass <IPs>] -- <command...>\n", argv[0]);
+                fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
                 return 1;
         }
     }
