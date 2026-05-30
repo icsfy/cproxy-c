@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <limits.h>
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
@@ -22,7 +23,7 @@ enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 volatile sig_atomic_t g_keep_running = 1;
 int g_cgroup_created = 0;
 int g_is_v2 = 0;
-char g_cgroup_path[256] = {0};
+char g_cgroup_path[PATH_MAX] = {0};
 char g_output_chain[128] = {0};
 char g_prerouting_chain[128] = {0};
 enum Mode g_mode = MODE_REDIRECT;
@@ -51,18 +52,19 @@ int is_valid_bypass_str(const char* str) {
     if (!copy) return 0;
 
     int valid = 1;
-    char* token = strtok(copy, ",");
+    char* saveptr;
+    char* token = strtok_r(copy, ",", &saveptr);
     while (token != NULL) {
         while (*token == ' ') token++;
         char* end = token + strlen(token) - 1;
         while (end > token && *end == ' ') *end-- = '\0';
 
         if (strlen(token) > 0) {
-            if (strlen(token) >= 128) {
+            char part[256];
+            if (strlen(token) >= sizeof(part)) {
                 valid = 0;
                 break;
             }
-            char part[128];
             snprintf(part, sizeof(part), "%s", token);
             char* slash = strchr(part, '/');
             if (slash) {
@@ -82,14 +84,14 @@ int is_valid_bypass_str(const char* str) {
             }
         }
         if (!valid) break;
-        token = strtok(NULL, ",");
+        token = strtok_r(NULL, ",", &saveptr);
     }
     free(copy);
     return valid;
 }
 
 int run_cmd_v(const char *fmt, va_list args, int silent) {
-    char cmd_buf[1024];
+    char cmd_buf[2048];
     vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
 
     pid_t pid = fork();
@@ -155,11 +157,12 @@ int init_chain(const char *table, const char *chain, const char *parent, const c
 int apply_bypass_rules(const char* bypass_str, const char* chain, const char* table, const char* iptables_cmd) {
     if (!bypass_str || strlen(bypass_str) == 0) return 0;
 
-    char bypass_copy[512];
-    snprintf(bypass_copy, sizeof(bypass_copy), "%s", bypass_str);
+    char *bypass_copy = strdup(bypass_str);
+    if (!bypass_copy) return -1;
 
     int is_ipv6 = (strcmp(iptables_cmd, "ip6tables") == 0);
-    char* token = strtok(bypass_copy, ",");
+    char *saveptr;
+    char* token = strtok_r(bypass_copy, ",", &saveptr);
     while (token != NULL) {
         // Trim spaces
         while(*token == ' ') token++;
@@ -176,11 +179,15 @@ int apply_bypass_rules(const char* bypass_str, const char* chain, const char* ta
             int is_this_v6 = is_valid_ipv6(ip_only);
 
             if ((is_ipv6 && is_this_v6) || (!is_ipv6 && is_this_v4)) {
-                CHECK(run_cmd("%s -w -t %s -A %s -d %s -j RETURN", iptables_cmd, table, chain, token));
+                if (run_cmd("%s -w -t %s -A %s -d %s -j RETURN", iptables_cmd, table, chain, token) != 0) {
+                    free(bypass_copy);
+                    return -1;
+                }
             }
         }
-        token = strtok(NULL, ",");
+        token = strtok_r(NULL, ",", &saveptr);
     }
+    free(bypass_copy);
     return 0;
 }
 
@@ -242,8 +249,8 @@ void cleanup(void) {
 
     if (g_cgroup_created && g_cgroup_path[0] != '\0') {
         // Move all remaining processes back to the parent cgroup to ensure rmdir succeeds
-        char parent_tasks_file[512];
-        char cg_base_path[256];
+        char parent_tasks_file[PATH_MAX + 64];
+        char cg_base_path[PATH_MAX];
         snprintf(cg_base_path, sizeof(cg_base_path), "%s", g_cgroup_path);
         char *last_slash = strrchr(cg_base_path, '/');
         if (last_slash) {
@@ -255,7 +262,7 @@ void cleanup(void) {
                 f_parent = fopen(parent_tasks_file, "w");
             }
             if (f_parent) {
-                char tasks_file[512];
+                char tasks_file[PATH_MAX + 64];
                 snprintf(tasks_file, sizeof(tasks_file), "%s/cgroup.procs", g_cgroup_path);
                 FILE *f = fopen(tasks_file, "r");
                 if (!f) {
@@ -302,7 +309,7 @@ int setup_cgroup(pid_t pid, const char *cg_base) {
     }
     g_cgroup_created = 1;
 
-    char tasks_file[512];
+    char tasks_file[PATH_MAX + 64];
     snprintf(tasks_file, sizeof(tasks_file), "%s/cgroup.procs", g_cgroup_path);
     FILE *f = fopen(tasks_file, "w");
     if (!f) {
@@ -317,7 +324,7 @@ int setup_cgroup(pid_t pid, const char *cg_base) {
     fclose(f);
 
     if (!g_is_v2) {
-        char classid_file[512];
+        char classid_file[PATH_MAX + 64];
         snprintf(classid_file, sizeof(classid_file), "%s/net_cls.classid", g_cgroup_path);
         f = fopen(classid_file, "w");
         if (f) {
@@ -438,7 +445,7 @@ int setup_iptables_trace(pid_t pid, int is_v2, const char* cgroup_path, const ch
 
 int is_cgroup_empty(void) {
     if (!g_cgroup_created || g_cgroup_path[0] == '\0') return 1;
-    char tasks_file[512];
+    char tasks_file[PATH_MAX + 64];
     snprintf(tasks_file, sizeof(tasks_file), "%s/cgroup.procs", g_cgroup_path);
     FILE *f = fopen(tasks_file, "r");
     if (!f) {
@@ -505,7 +512,7 @@ int main(int argc, char *argv[]) {
     int redirect_dns = 0;
     char mode_str[32] = "redirect";
     char override_dns[64] = {0};
-    char bypass_str[512] = {0};
+    char *bypass_str = NULL;
     pid_t target_pid = 0;
     int status = 0;
 
@@ -549,7 +556,8 @@ int main(int argc, char *argv[]) {
             case 'i': target_pid = atoi(optarg); break;
             case 'b':
                 if (is_valid_bypass_str(optarg)) {
-                    snprintf(bypass_str, sizeof(bypass_str), "%s", optarg);
+                    if (bypass_str) free(bypass_str);
+                    bypass_str = strdup(optarg);
                 } else {
                     fprintf(stderr, "Error: Invalid characters in --bypass string\n");
                     return 1;
@@ -574,10 +582,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (strlen(bypass_str) == 0) {
+    if (!bypass_str) {
         char *env_bypass = getenv("CPROXY_BYPASS");
         if (env_bypass && is_valid_bypass_str(env_bypass)) {
-            snprintf(bypass_str, sizeof(bypass_str), "%s", env_bypass);
+            bypass_str = strdup(env_bypass);
         }
     }
 
@@ -668,7 +676,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    char relative_cg_path[256] = {0};
+    char relative_cg_path[PATH_MAX] = {0};
     if (g_is_v2) {
         snprintf(relative_cg_path, sizeof(relative_cg_path), "cproxy-%d", process_to_proxy);
     }
@@ -722,6 +730,8 @@ int main(int argc, char *argv[]) {
     while (g_keep_running && !is_cgroup_empty()) {
         sleep(1);
     }
+
+    if (bypass_str) free(bypass_str);
 
     if (target_pid > 0) return 0;
 
