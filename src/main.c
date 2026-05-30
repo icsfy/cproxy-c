@@ -36,6 +36,10 @@ void cleanup(void) {
         free(g_ctx.bypass_str);
         g_ctx.bypass_str = NULL;
     }
+    if (g_ctx.bypass_rules) {
+        free(g_ctx.bypass_rules);
+        g_ctx.bypass_rules = NULL;
+    }
 }
 
 static int detect_cgroup_version(void) {
@@ -46,7 +50,7 @@ static int detect_cgroup_version(void) {
     } else {
         snprintf(g_ctx.cg_base, sizeof(g_ctx.cg_base), "/sys/fs/cgroup/net_cls");
         if (stat(g_ctx.cg_base, &st) != 0) {
-            fprintf(stderr, "Error: Cgroup v1 net_cls controller not found at %s\n", g_ctx.cg_base);
+            log_error("Cgroup v1 net_cls controller not found at %s", g_ctx.cg_base);
             return -1;
         }
     }
@@ -55,9 +59,10 @@ static int detect_cgroup_version(void) {
 
 int main(int argc, char *argv[]) {
     if (parse_args(&g_ctx, argc, argv) != 0) return 1;
+    if (parse_bypass_rules(&g_ctx) != 0) return 1;
 
     if (!g_ctx.dry_run && getuid() != 0) {
-        fprintf(stderr, "Error: cproxy must be run as root (use sudo)\n");
+        log_error("cproxy must be run as root (use sudo)");
         return 1;
     }
 

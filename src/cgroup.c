@@ -82,9 +82,9 @@ int is_cgroup_empty(void) {
 
 void cleanup_cgroup(void) {
     if (g_ctx.cgroup_created && g_ctx.cgroup_path[0] != '\0') {
-        if (g_ctx.verbose) printf("[INFO] Cleaning up cgroup: %s\n", g_ctx.cgroup_path);
+        if (g_ctx.verbose) log_info("Cleaning up cgroup: %s", g_ctx.cgroup_path);
         if (g_ctx.dry_run) {
-            printf("[DEBUG] Would cleanup cgroup: %s\n", g_ctx.cgroup_path);
+            log_debug("Would cleanup cgroup: %s", g_ctx.cgroup_path);
             g_ctx.cgroup_created = 0;
             return;
         }
@@ -115,7 +115,7 @@ void cleanup_cgroup(void) {
                     while (fgets(buf, sizeof(buf), f) != NULL) {
                         long pid = strtol(buf, NULL, 10);
                         if (pid > 0) {
-                            if (g_ctx.verbose) printf("[INFO] Moving PID %ld back to parent cgroup\n", pid);
+                            log_info("Moving PID %ld back to parent cgroup", pid);
                             fprintf(f_parent, "%ld\n", pid);
                             fflush(f_parent);
                         }
@@ -128,9 +128,7 @@ void cleanup_cgroup(void) {
 
         if (rmdir(g_ctx.cgroup_path) != 0 && errno != ENOENT) {
             if (g_ctx.verbose) {
-                char err_msg[PATH_MAX + 64];
-                snprintf(err_msg, sizeof(err_msg), "rmdir cgroup '%s' failed", g_ctx.cgroup_path);
-                perror(err_msg);
+                log_error("rmdir cgroup '%s' failed: %s", g_ctx.cgroup_path, strerror(errno));
             }
         }
         g_ctx.cgroup_created = 0;

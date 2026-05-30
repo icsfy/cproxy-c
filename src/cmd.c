@@ -4,7 +4,7 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
     char cmd_buf[4096];
     int n = vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
     if (n < 0 || n >= (int)sizeof(cmd_buf)) {
-        if (!silent) fprintf(stderr, "Error: Command too long\n");
+        if (!silent) log_error("Command too long");
         return -1;
     }
 
@@ -63,6 +63,64 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         if (!silent || g_ctx.verbose) perror("fork failed");
         return -1;
     }
+}
+
+int run_exec(int silent, ...) {
+    va_list args;
+    va_start(args, silent);
+    const char *arg;
+    int count = 0;
+    
+    va_list args_copy;
+    va_copy(args_copy, args);
+    while ((arg = va_arg(args_copy, const char *)) != NULL) count++;
+    va_end(args_copy);
+
+    char **argv = malloc((count + 1) * sizeof(char *));
+    if (!argv) {
+        va_end(args);
+        return -1;
+    }
+
+    va_copy(args_copy, args);
+    for (int i = 0; i < count; i++) {
+        argv[i] = (char *)va_arg(args_copy, const char *);
+    }
+    argv[count] = NULL;
+    va_end(args_copy);
+    va_end(args);
+
+    if (g_ctx.verbose || g_ctx.dry_run) {
+        fprintf(stdout, "[DEBUG] Executing:");
+        for (int i = 0; i < count; i++) fprintf(stdout, " %s", argv[i]);
+        fprintf(stdout, "\n");
+        if (g_ctx.dry_run) {
+            free(argv);
+            return 0;
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (silent && !g_ctx.verbose) {
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull != -1) {
+                dup2(devnull, STDOUT_FILENO);
+                dup2(devnull, STDERR_FILENO);
+                close(devnull);
+            }
+        }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    
+    free(argv);
+    if (pid > 0) {
+        int status;
+        if (waitpid(pid, &status, 0) == -1) return -1;
+        return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : -1;
+    }
+    return -1;
 }
 
 int run_cmd(const char *fmt, ...) {

@@ -1,31 +1,23 @@
 #include "cproxy.h"
 
-void log_info(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    fprintf(stdout, "[INFO] ");
-    vfprintf(stdout, fmt, args);
-    fprintf(stdout, "\n");
-    va_end(args);
-}
+void log_msg(LogLevel level, const char *fmt, ...) {
+    if (level == LOG_LEVEL_DEBUG && !g_ctx.verbose && !g_ctx.dry_run) return;
 
-void log_error(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    fprintf(stderr, "[ERROR] ");
-    vfprintf(stderr, fmt, args);
-    fprintf(stderr, "\n");
-    va_end(args);
-}
+    FILE *out = (level == LOG_LEVEL_ERROR || level == LOG_LEVEL_WARN) ? stderr : stdout;
+    const char *prefix = "";
+    switch (level) {
+        case LOG_LEVEL_DEBUG: prefix = "[DEBUG] "; break;
+        case LOG_LEVEL_INFO:  prefix = "[INFO]  "; break;
+        case LOG_LEVEL_WARN:  prefix = "[WARN]  "; break;
+        case LOG_LEVEL_ERROR: prefix = "[ERROR] "; break;
+    }
 
-void log_debug(const char *fmt, ...) {
-    if (!g_ctx.verbose && !g_ctx.dry_run) return;
+    fprintf(out, "%s", prefix);
     va_list args;
     va_start(args, fmt);
-    fprintf(stdout, "[DEBUG] ");
-    vfprintf(stdout, fmt, args);
-    fprintf(stdout, "\n");
+    vfprintf(out, fmt, args);
     va_end(args);
+    fprintf(out, "\n");
 }
 
 double get_time_ms(void) {
@@ -96,11 +88,62 @@ int is_valid_bypass_str(const char* str) {
     return valid;
 }
 
-int check_dependencies(void) {
+int parse_bypass_rules(Context *ctx) {
+    if (!ctx->bypass_str || strlen(ctx->bypass_str) == 0) return 0;
+
+    char *copy = strdup(ctx->bypass_str);
+    if (!copy) return -1;
+
+    // Count tokens first
+    int count = 0;
+    char *saveptr;
+    char *token = strtok_r(copy, ",", &saveptr);
+    while (token) {
+        count++;
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    free(copy);
+
+    if (count == 0) return 0;
+
+    ctx->bypass_rules = calloc(count, sizeof(BypassRule));
+    if (!ctx->bypass_rules) return -1;
+
+    copy = strdup(ctx->bypass_str);
+    token = strtok_r(copy, ",", &saveptr);
+    int idx = 0;
+    while (token) {
+        while (*token == ' ') token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && *end == ' ') *end-- = '\0';
+
+        if (strlen(token) > 0) {
+            snprintf(ctx->bypass_rules[idx].addr, sizeof(ctx->bypass_rules[idx].addr), "%s", token);
+            
+            char ip_only[64];
+            snprintf(ip_only, sizeof(ip_only), "%s", token);
+            char *slash = strchr(ip_only, '/');
+            if (slash) *slash = '\0';
+
+            if (is_valid_ipv6(ip_only)) {
+                ctx->bypass_rules[idx].is_v6 = true;
+            } else {
+                ctx->bypass_rules[idx].is_v6 = false;
+            }
+            idx++;
+        }
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    ctx->bypass_count = idx;
+    free(copy);
+    return 0;
+}
+
+int check_dependencies(void) { // ... unchanged ...
     const char *deps[] = {"iptables", "ip", "ip6tables"};
     for (size_t i = 0; i < sizeof(deps) / sizeof(deps[0]); i++) {
-        if (run_cmd_silent("command -v %s", deps[i]) != 0) {
-            fprintf(stderr, "Error: '%s' command not found. Please install it.\n", deps[i]);
+        if (run_exec(1, "command", "-v", deps[i], NULL) != 0) {
+            log_error("'%s' command not found. Please install it.", deps[i]);
             return -1;
         }
     }
