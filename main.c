@@ -47,7 +47,8 @@ static Context g_ctx = {
     .mode = MODE_REDIRECT,
     .verbose = 0,
     .tproxy_mark = 0,
-    .cgroup_created = 0
+    .cgroup_created = 0,
+    .target_pid = 0
 };
 
 volatile sig_atomic_t g_keep_running = 1;
@@ -250,18 +251,7 @@ void cleanup(void) {
     sigfillset(&set);
     sigprocmask(SIG_BLOCK, &set, NULL);
 
-    // We need the PID to reconstruct the chain names.
-    // Since chains are named with the target PID, and we might not have it easily here
-    // if we haven't stored it globally, but g_ctx.output_chain already contains the name.
-    // However, some modes use multiple chains.
-    // Let's extract the PID from g_ctx.output_chain if possible, or use a better way.
-    // Actually, g_ctx.output_chain was set in setup_iptables.
-
-    int pid = 0;
-    if (g_ctx.output_chain[0] != '\0') {
-        char *last_underscore = strrchr(g_ctx.output_chain, '_');
-        if (last_underscore) pid = atoi(last_underscore + 1);
-    }
+    int pid = (int)g_ctx.target_pid;
 
     if (pid > 0) {
         if (g_ctx.mode == MODE_REDIRECT) {
@@ -649,16 +639,22 @@ int main(int argc, char *argv[]) {
                         size_t old_len = strlen(g_ctx.bypass_str);
                         size_t add_len = strlen(optarg);
                         char *new_str = malloc(old_len + add_len + 2); // +1 for comma, +1 for null
-                        if (new_str) {
-                            memcpy(new_str, g_ctx.bypass_str, old_len);
-                            new_str[old_len] = ',';
-                            memcpy(new_str + old_len + 1, optarg, add_len);
-                            new_str[old_len + 1 + add_len] = '\0';
-                            free(g_ctx.bypass_str);
-                            g_ctx.bypass_str = new_str;
+                        if (!new_str) {
+                            perror("malloc failed");
+                            ret = 1; goto cleanup_all;
                         }
+                        memcpy(new_str, g_ctx.bypass_str, old_len);
+                        new_str[old_len] = ',';
+                        memcpy(new_str + old_len + 1, optarg, add_len);
+                        new_str[old_len + 1 + add_len] = '\0';
+                        free(g_ctx.bypass_str);
+                        g_ctx.bypass_str = new_str;
                     } else {
                         g_ctx.bypass_str = strdup(optarg);
+                        if (!g_ctx.bypass_str) {
+                            perror("strdup failed");
+                            ret = 1; goto cleanup_all;
+                        }
                     }
                 } else {
                     fprintf(stderr, "Error: Invalid --bypass string\n");
@@ -714,15 +710,24 @@ int main(int argc, char *argv[]) {
             char *sudo_uid_str = getenv("SUDO_UID");
             char *sudo_gid_str = getenv("SUDO_GID");
             if (sudo_user && sudo_uid_str && sudo_gid_str) {
-                uid_t uid = atoi(sudo_uid_str);
-                gid_t gid = atoi(sudo_gid_str);
+                uid_t uid = (uid_t)atoi(sudo_uid_str);
+                gid_t gid = (gid_t)atoi(sudo_gid_str);
 
                 // Get password entry while still root
                 struct passwd *pw = getpwuid(uid);
 
-                if (initgroups(sudo_user, gid) != 0) perror("initgroups failed");
-                if (setgid(gid) != 0) perror("setgid failed");
-                if (setuid(uid) != 0) perror("setuid failed");
+                if (initgroups(sudo_user, gid) != 0) {
+                    perror("initgroups failed");
+                    _exit(1);
+                }
+                if (setgid(gid) != 0) {
+                    perror("setgid failed");
+                    _exit(1);
+                }
+                if (setuid(uid) != 0) {
+                    perror("setuid failed");
+                    _exit(1);
+                }
 
                 if (pw) {
                     setenv("HOME", pw->pw_dir, 1);
@@ -740,8 +745,16 @@ int main(int argc, char *argv[]) {
     }
 
     pid_t process_to_proxy = (target_pid > 0) ? target_pid : child_pid;
-    if (setup_cgroup(process_to_proxy) != 0) { if (target_pid == 0) close(pipefd[1]); ret = 1; goto cleanup_all; }
-    if (setup_iptables(process_to_proxy) != 0) { if (target_pid == 0) close(pipefd[1]); ret = 1; goto cleanup_all; }
+    g_ctx.target_pid = process_to_proxy;
+
+    if (setup_cgroup(process_to_proxy) != 0) {
+        if (target_pid == 0) close(pipefd[1]);
+        ret = 1; goto cleanup_all;
+    }
+    if (setup_iptables(process_to_proxy) != 0) {
+        if (target_pid == 0) close(pipefd[1]);
+        ret = 1; goto cleanup_all;
+    }
 
     if (target_pid > 0) {
         printf("Proxying PID %d. Press Ctrl+C to stop...\n", target_pid);
