@@ -23,3 +23,8 @@ cproxy-c
 *.njsproj
 *.sln
 *.sw?
+
+# Test and Log files
+proxy.log
+__pycache__/
+vgcore.*
