@@ -139,6 +139,42 @@ void cleanup(void) {
     }
 
     if (g_cgroup_created && g_cgroup_path[0] != '\0') {
+        // Move all remaining processes back to the parent cgroup to ensure rmdir succeeds
+        char parent_tasks_file[512];
+        char cg_base_path[256];
+        strncpy(cg_base_path, g_cgroup_path, sizeof(cg_base_path) - 1);
+        cg_base_path[sizeof(cg_base_path) - 1] = '\0';
+        char *last_slash = strrchr(cg_base_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            snprintf(parent_tasks_file, sizeof(parent_tasks_file), "%s/cgroup.procs", cg_base_path);
+            FILE *f_parent = fopen(parent_tasks_file, "w");
+            if (!f_parent) {
+                snprintf(parent_tasks_file, sizeof(parent_tasks_file), "%s/tasks", cg_base_path);
+                f_parent = fopen(parent_tasks_file, "w");
+            }
+            if (f_parent) {
+                char tasks_file[512];
+                snprintf(tasks_file, sizeof(tasks_file), "%s/cgroup.procs", g_cgroup_path);
+                FILE *f = fopen(tasks_file, "r");
+                if (!f) {
+                    snprintf(tasks_file, sizeof(tasks_file), "%s/tasks", g_cgroup_path);
+                    f = fopen(tasks_file, "r");
+                }
+                if (f) {
+                    char buf[32];
+                    while (fgets(buf, sizeof(buf), f) != NULL) {
+                        int pid = atoi(buf);
+                        if (pid > 0) {
+                            fprintf(f_parent, "%d\n", pid);
+                            fflush(f_parent);
+                        }
+                    }
+                    fclose(f);
+                }
+                fclose(f_parent);
+            }
+        }
         rmdir(g_cgroup_path);
         g_cgroup_created = 0;
     }
