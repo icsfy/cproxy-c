@@ -17,6 +17,8 @@
 #include <fcntl.h>
 #include <limits.h>
 
+#define CPROXY_VERSION "1.1.0"
+
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
 // Global state for cleanup
@@ -60,7 +62,7 @@ int is_valid_bypass_str(const char* str) {
         while (end > token && *end == ' ') *end-- = '\0';
 
         if (strlen(token) > 0) {
-            char part[256];
+            char part[512];
             if (strlen(token) >= sizeof(part)) {
                 valid = 0;
                 break;
@@ -91,8 +93,12 @@ int is_valid_bypass_str(const char* str) {
 }
 
 int run_cmd_v(const char *fmt, va_list args, int silent) {
-    char cmd_buf[2048];
-    vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
+    char cmd_buf[4096];
+    int n = vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
+    if (n < 0 || n >= (int)sizeof(cmd_buf)) {
+        if (!silent) fprintf(stderr, "Error: Command too long\n");
+        return -1;
+    }
 
     pid_t pid = fork();
     if (pid == 0) {
@@ -170,7 +176,7 @@ int apply_bypass_rules(const char* bypass_str, const char* chain, const char* ta
         while(end > token && *end == ' ') *end-- = '\0';
 
         if (strlen(token) > 0) {
-            char ip_only[128];
+            char ip_only[512];
             snprintf(ip_only, sizeof(ip_only), "%s", token);
             char* slash = strchr(ip_only, '/');
             if (slash) *slash = '\0';
@@ -289,12 +295,7 @@ void cleanup(void) {
 }
 
 void sig_handler(int sig) {
-    if (sig == SIGCHLD) {
-        int saved_errno = errno;
-        while (waitpid(-1, NULL, WNOHANG) > 0);
-        errno = saved_errno;
-        return;
-    }
+    (void)sig;
     g_keep_running = 0;
 }
 
@@ -524,13 +525,17 @@ int main(int argc, char *argv[]) {
         {"pid", required_argument, 0, 'i'},
         {"bypass", required_argument, 0, 'b'},
         {"help", no_argument, 0, 'h'},
+        {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
     };
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:h", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:dm:o:i:b:hv", long_options, &option_index)) != -1) {
         switch (opt) {
+            case 'v':
+                printf("cproxy version %s\n", CPROXY_VERSION);
+                return 0;
             case 'h':
                 fprintf(stderr, "Usage: %s [options] -- <command...>\n", argv[0]);
                 fprintf(stderr, "Options:\n");
@@ -540,6 +545,7 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "  -o, --override-dns <ip>   Override DNS in tproxy mode (IPv4 only)\n");
                 fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
+                fprintf(stderr, "  -v, --version             Show version information\n");
                 fprintf(stderr, "  -h, --help                Show this help message\n");
                 return 0;
             case 'p': port = atoi(optarg); break;
@@ -597,7 +603,6 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
-    sigaction(SIGCHLD, &sa, NULL);
 
     const char *cg_base = "/sys/fs/cgroup/net_cls";
     struct stat st;
@@ -711,16 +716,17 @@ int main(int argc, char *argv[]) {
         close(pipefd[1]);
 
         while (g_keep_running) {
-            int res = waitpid(child_pid, &status, WNOHANG);
-            if (res == child_pid) {
+            int r = waitpid(child_pid, &status, WNOHANG);
+            if (r == child_pid) {
                 break;
-            } else if (res == -1 && errno != EINTR) {
-                perror("waitpid failed");
+            } else if (r == -1) {
+                if (errno == EINTR) continue;
+                if (errno != ECHILD) perror("waitpid failed");
                 break;
             }
             usleep(100000); // 100ms
         }
-        if (!g_keep_running) {
+        if (!g_keep_running && kill(child_pid, 0) == 0) {
             kill(child_pid, SIGTERM);
             waitpid(child_pid, &status, 0);
         }
