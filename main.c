@@ -297,9 +297,10 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     snprintf(g_prerouting_chain, sizeof(g_prerouting_chain), "cp_tp_pre_%d", pid);
 
     // IP Rules for TPROXY routing loop:
-    // 1. Mark packets in mangle/OUTPUT.
+    // 1. Mark packets in mangle/OUTPUT using cgroup match.
     // 2. Routing rule directs marked packets to local loopback.
     // 3. Packets "re-enter" via PREROUTING where TPROXY target is valid.
+    // This allows intercepting locally-generated traffic which normally bypasses PREROUTING.
     run_cmd("ip rule add fwmark %d table %d", g_tproxy_mark, g_tproxy_mark);
     run_cmd("ip route add local 0.0.0.0/0 dev lo table %d", g_tproxy_mark);
 
@@ -531,9 +532,18 @@ int main(int argc, char *argv[]) {
                 uid_t uid = atoi(sudo_uid_str);
                 gid_t gid = atoi(sudo_gid_str);
 
-                if (initgroups(sudo_user, gid) != 0) {}
-                if (setgid(gid) != 0) { perror("setgid failed"); _exit(1); }
-                if (setuid(uid) != 0) { perror("setuid failed"); _exit(1); }
+                if (initgroups(sudo_user, gid) != 0) {
+                    perror("initgroups failed");
+                    _exit(1);
+                }
+                if (setgid(gid) != 0) {
+                    perror("setgid failed");
+                    _exit(1);
+                }
+                if (setuid(uid) != 0) {
+                    perror("setuid failed");
+                    _exit(1);
+                }
 
                 struct passwd *pw = getpwuid(uid);
                 if (pw) {
@@ -578,9 +588,13 @@ int main(int argc, char *argv[]) {
     if (target_pid > 0) {
         printf("Proxying existing PID %d in mode '%s'. Press Ctrl+C to stop...\n", target_pid, mode_str);
         while (g_keep_running) {
+            if (kill(target_pid, 0) == -1 && errno == ESRCH) {
+                printf("Target process %d has exited.\n", target_pid);
+                break;
+            }
             sleep(1);
         }
-        printf("\nTerminating...\n");
+        printf("Terminating...\n");
         return 0;
     }
 
