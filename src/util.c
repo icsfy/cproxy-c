@@ -139,10 +139,10 @@ int parse_bypass_rules(Context *ctx) {
     return 0;
 }
 
-int check_dependencies(void) { // ... unchanged ...
+int check_dependencies(void) {
     const char *deps[] = {"iptables", "ip", "ip6tables"};
     for (size_t i = 0; i < sizeof(deps) / sizeof(deps[0]); i++) {
-        if (run_exec(1, "command", "-v", deps[i], NULL) != 0) {
+        if (run_cmd_silent("command -v %s", deps[i]) != 0) {
             log_error("'%s' command not found. Please install it.", deps[i]);
             return -1;
         }
