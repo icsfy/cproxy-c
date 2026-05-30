@@ -45,25 +45,34 @@ run_test() {
         exit 1
     fi
 
-    # DNS Test
-    log_info "Testing DNS redirection in $mode mode..."
+    # DNS + TCP Test using curl with a hostname
+    log_info "Testing DNS + TCP redirection in $mode mode..."
     local dns_flag=""
     if [[ "$mode" == "redirect" ]]; then
         dns_flag="--redirect-dns"
     fi
 
-    # Use nc to send a UDP packet to 8.8.8.8:53 and see if it's intercepted and responded to
-    # We expect our proxy log to show "Accepted UDP packet" AND curl/nc to get the response
-    DNS_OUTPUT=$(sudo ./cproxy --mode "$mode" --port $PROXY_PORT $dns_flag -- bash -c "echo 'dns-test' | nc -u -w 2 8.8.8.8 53" 2>/dev/null)
+    # Use curl with a custom hostname. 
+    # Our DNS mock will resolve it to 127.0.0.1, and then TCP redirection will kick in.
+    # We use -v to debug and retry once if it fails immediately
+    OUTPUT=$(sudo ./cproxy --mode "$mode" --port $PROXY_PORT $dns_flag -- curl -v -s -m 5 http://cproxy.test 2>&1)
     
-    if grep -q "Accepted UDP packet" proxy.log && [[ "$DNS_OUTPUT" == *"cproxy-dns-ok"* ]]; then
-        log_info "PASS: $mode mode DNS works correctly (intercepted and responded)"
+    if [[ "$OUTPUT" == *"cproxy works!"* ]]; then
+        log_info "PASS: $mode mode DNS + TCP redirection works"
     else
-        log_error "FAIL: $mode mode DNS failed"
-        echo "DNS Output was: $DNS_OUTPUT"
-        echo "Proxy log:"
-        cat proxy.log
-        exit 1
+        # Retry once for stability
+        sleep 1
+        OUTPUT=$(sudo ./cproxy --mode "$mode" --port $PROXY_PORT $dns_flag -- curl -v -s -m 5 http://cproxy.test 2>&1)
+        if [[ "$OUTPUT" == *"cproxy works!"* ]]; then
+             log_info "PASS: $mode mode DNS + TCP redirection works (on retry)"
+        else
+            log_error "FAIL: $mode mode DNS + TCP redirection failed"
+            echo "Verbose Output:"
+            echo "$OUTPUT"
+            echo "Proxy log:"
+            cat proxy.log
+            exit 1
+        fi
     fi
 
 

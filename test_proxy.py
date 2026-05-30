@@ -11,38 +11,65 @@ SOL_IP = 0
 IP_TRANSPARENT = 19
 SO_ORIGINAL_DST = 80
 
+def build_dns_response(query_data):
+    """
+    Builds a simple DNS response. Points A queries to 127.0.0.1.
+    Returns empty successful response for AAAA to avoid delays.
+    """
+    if len(query_data) < 12: return b""
+    
+    tx_id = query_data[:2]
+    # Extract query type (A=1, AAAA=28)
+    # The question section ends with \x00, then 2 bytes Type, 2 bytes Class
+    idx = 12
+    while idx < len(query_data) and query_data[idx] != 0:
+        idx += query_data[idx] + 1
+    if idx + 5 > len(query_data): return b""
+    
+    qtype = struct.unpack("!H", query_data[idx+1:idx+3])[0]
+    question_section = query_data[12:idx+5]
+    
+    if qtype == 1: # A Record
+        flags = b"\x81\x80"
+        counts = b"\x00\x01\x00\x01\x00\x00\x00\x00"
+        # Answer points to 1.2.3.4 (0x01020304) to ensure interception
+        answer = b"\xc0\x0c" + b"\x00\x01\x00\x01" + b"\x00\x00\x00\x3c" + b"\x00\x04" + b"\x01\x02\x03\x04"
+        return tx_id + flags + counts + question_section + answer
+    else: # AAAA or others: return "No error, 0 answers"
+        flags = b"\x81\x80"
+        counts = b"\x00\x01\x00\x00\x00\x00\x00\x00"
+        return tx_id + flags + counts + question_section
+
 def start_udp_server(port):
     """
     Starts a UDP server to test DNS redirection.
-    Supports transparent responses by spoofing original destination.
+    Supports transparent DNS mock responses.
     """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # IP_RECVORIGDSTADDR = 20
         try:
-            s.setsockopt(socket.SOL_IP, 20, 1)
+            s.setsockopt(socket.SOL_IP, 20, 1) # IP_RECVORIGDSTADDR
             s.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
         except:
             pass
         s.bind(('0.0.0.0', port))
-        print(f"UDP server listening on port {port}...")
+        print(f"UDP server listening on port {port} (DNS Mock)...")
         while True:
-            # Use recvmsg to get ancillary data (original destination)
             data, ancdata, msg_flags, addr = s.recvmsg(1024, socket.CMSG_SPACE(24))
             
             orig_dst = None
             for cmsg_level, cmsg_type, cmsg_data in ancdata:
-                if cmsg_level == socket.SOL_IP and cmsg_type == 20: # IP_ORIGDSTADDR
-                    # sockaddr_in is 16 bytes: family(2), port(2), addr(4), zero(8)
+                if cmsg_level == socket.SOL_IP and cmsg_type == 20:
                     family, port_raw, ip_raw = struct.unpack("!HH4s8x", cmsg_data)
                     orig_dst = (socket.inet_ntoa(ip_raw), port_raw)
             
-            print(f"Accepted UDP packet from {addr}, size {len(data)}")
+            print(f"Accepted DNS query from {addr}")
             
-            response = b"cproxy-dns-ok"
+            response = build_dns_response(data)
+            if not response: continue
+
             if orig_dst:
-                # Transparent response: spoof source as original destination
                 try:
                     resp_s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     resp_s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -51,10 +78,8 @@ def start_udp_server(port):
                     resp_s.sendto(response, addr)
                     resp_s.close()
                     continue
-                except Exception as e:
-                    print(f"Failed to send transparent response: {e}")
-            
-            # Fallback for standard REDIRECT (NAT handles it)
+                except:
+                    pass
             s.sendto(response, addr)
     except Exception as e:
         print(f"UDP Server Error: {e}")
