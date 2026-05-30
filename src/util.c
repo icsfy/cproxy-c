@@ -71,7 +71,7 @@ int is_valid_bypass_str(const char* str) {
 int check_dependencies(void) {
     const char *deps[] = {"iptables", "ip", "ip6tables"};
     for (size_t i = 0; i < sizeof(deps) / sizeof(deps[0]); i++) {
-        if (run_cmd_status("which %s", deps[i]) != 0) {
+        if (run_cmd_status("command -v %s", deps[i]) != 0) {
             fprintf(stderr, "Error: '%s' command not found. Please install it.\n", deps[i]);
             return -1;
         }

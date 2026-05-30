@@ -64,7 +64,7 @@ int is_cgroup_empty(void);
 void cleanup_cgroup(void);
 
 // Iptables
-int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd);
+int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match);
 int apply_bypass_rules(const char* bypass_str, const char* chain, const char* table, const char* iptables_cmd);
 int setup_iptables(pid_t pid);
 void cleanup_iptables(void);

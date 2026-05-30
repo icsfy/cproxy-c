@@ -174,7 +174,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (g_ctx.verbose) printf("[INFO] Detected Cgroup v%d mode\n", g_ctx.is_v2 ? 2 : 1);
+    if (g_ctx.verbose) {
+        printf("[INFO] Detected Cgroup v%d mode\n", g_ctx.is_v2 ? 2 : 1);
+        printf("[INFO] Mode: %s, Port: %d\n", mode_str, g_ctx.port);
+        if (g_ctx.bypass_str) printf("[INFO] Bypass: %s\n", g_ctx.bypass_str);
+        if (g_ctx.mode == MODE_TPROXY && g_ctx.override_dns[0])
+            printf("[INFO] Override DNS: %s\n", g_ctx.override_dns);
+    }
 
     int pipefd[2];
     pid_t child_pid = 0;
