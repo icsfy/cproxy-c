@@ -52,14 +52,15 @@ run_test() {
         dns_flag="--redirect-dns"
     fi
 
-    # Use nc to send a UDP packet to 8.8.8.8:53 and see if it's intercepted
-    # We expect our proxy log to show "Accepted UDP packet"
-    sudo ./cproxy --mode "$mode" --port $PROXY_PORT $dns_flag -- bash -c "echo 'dns-test' | nc -u -w 2 8.8.8.8 53" > /dev/null 2>&1
-
-    if grep -q "Accepted UDP packet" proxy.log; then
-        log_info "PASS: $mode mode DNS works correctly"
+    # Use nc to send a UDP packet to 8.8.8.8:53 and see if it's intercepted and responded to
+    # We expect our proxy log to show "Accepted UDP packet" AND curl/nc to get the response
+    DNS_OUTPUT=$(sudo ./cproxy --mode "$mode" --port $PROXY_PORT $dns_flag -- bash -c "echo 'dns-test' | nc -u -w 2 8.8.8.8 53" 2>/dev/null)
+    
+    if grep -q "Accepted UDP packet" proxy.log && [[ "$DNS_OUTPUT" == *"cproxy-dns-ok"* ]]; then
+        log_info "PASS: $mode mode DNS works correctly (intercepted and responded)"
     else
         log_error "FAIL: $mode mode DNS failed"
+        echo "DNS Output was: $DNS_OUTPUT"
         echo "Proxy log:"
         cat proxy.log
         exit 1

@@ -14,22 +14,48 @@ SO_ORIGINAL_DST = 80
 def start_udp_server(port):
     """
     Starts a UDP server to test DNS redirection.
+    Supports transparent responses by spoofing original destination.
     """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # For TProxy UDP, we might need IP_TRANSPARENT to bind to non-local IPs
-        # but for simple REDIRECT to localhost, we don't strictly need it for binding to 0.0.0.0
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # IP_RECVORIGDSTADDR = 20
         try:
-            s.setsockopt(SOL_IP, IP_TRANSPARENT, 1)
+            s.setsockopt(socket.SOL_IP, 20, 1)
+            s.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
         except:
             pass
         s.bind(('0.0.0.0', port))
         print(f"UDP server listening on port {port}...")
         while True:
-            data, addr = s.recvfrom(1024)
+            # Use recvmsg to get ancillary data (original destination)
+            data, ancdata, msg_flags, addr = s.recvmsg(1024, socket.CMSG_SPACE(24))
+            
+            orig_dst = None
+            for cmsg_level, cmsg_type, cmsg_data in ancdata:
+                if cmsg_level == socket.SOL_IP and cmsg_type == 20: # IP_ORIGDSTADDR
+                    # sockaddr_in is 16 bytes: family(2), port(2), addr(4), zero(8)
+                    family, port_raw, ip_raw = struct.unpack("!HH4s8x", cmsg_data)
+                    orig_dst = (socket.inet_ntoa(ip_raw), port_raw)
+            
             print(f"Accepted UDP packet from {addr}, size {len(data)}")
-            # Send a dummy response to acknowledge
-            s.sendto(b"cproxy-dns-ok", addr)
+            
+            response = b"cproxy-dns-ok"
+            if orig_dst:
+                # Transparent response: spoof source as original destination
+                try:
+                    resp_s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    resp_s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    resp_s.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
+                    resp_s.bind(orig_dst)
+                    resp_s.sendto(response, addr)
+                    resp_s.close()
+                    continue
+                except Exception as e:
+                    print(f"Failed to send transparent response: {e}")
+            
+            # Fallback for standard REDIRECT (NAT handles it)
+            s.sendto(response, addr)
     except Exception as e:
         print(f"UDP Server Error: {e}")
 
