@@ -30,7 +30,16 @@ This will compile the project with strict flags (`-Wall -Wextra -Werror -O2`) in
 
 ## Usage
 
-This tool must be run as root to modify cgroups and iptables.
+This tool must be run as root to modify cgroups and iptables. 
+
+### Environment Variables and `sudo -E`
+By default, running `sudo` strips almost all of your personal environment variables (like custom `PATH`, `NVM_DIR`, `GOPATH`, or IDE specific variables) for security reasons. `cproxy` will automatically restore your `HOME`, `USER`, and `LOGNAME` so that standard tools like `docker` or `git` work correctly.
+
+However, if you are proxying a development tool (e.g., a Node.js script relying on `nvm` or a script relying on custom paths), you **must** use the `-E` flag with `sudo` to preserve your environment:
+```bash
+sudo -E ./cproxy --mode redirect --port 1080 -- <your-command>
+```
+*Security Note: Only use `-E` when you completely trust the application you are proxying.*
 
 ### Redirect Mode
 Redirect all TCP traffic (and optionally DNS) of a new command to a local transparent proxy port:
