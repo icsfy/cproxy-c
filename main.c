@@ -92,7 +92,7 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
     } else if (pid > 0) {
         int status;
         waitpid(pid, &status, 0);
-        
+
         if (g_ctx.verbose) {
             double end = get_time_ms();
             printf("[DEBUG] Command took %.2fms, exit code: %d\n", end - start, WEXITSTATUS(status));
