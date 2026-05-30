@@ -58,9 +58,12 @@ int is_valid_bypass_str(const char* str) {
         while (end > token && *end == ' ') *end-- = '\0';
 
         if (strlen(token) > 0) {
+            if (strlen(token) >= 128) {
+                valid = 0;
+                break;
+            }
             char part[128];
-            strncpy(part, token, sizeof(part) - 1);
-            part[sizeof(part) - 1] = '\0';
+            snprintf(part, sizeof(part), "%s", token);
             char* slash = strchr(part, '/');
             if (slash) {
                 *slash = '\0';
@@ -153,8 +156,7 @@ int apply_bypass_rules(const char* bypass_str, const char* chain, const char* ta
     if (!bypass_str || strlen(bypass_str) == 0) return 0;
 
     char bypass_copy[512];
-    strncpy(bypass_copy, bypass_str, sizeof(bypass_copy) - 1);
-    bypass_copy[sizeof(bypass_copy) - 1] = '\0';
+    snprintf(bypass_copy, sizeof(bypass_copy), "%s", bypass_str);
 
     int is_ipv6 = (strcmp(iptables_cmd, "ip6tables") == 0);
     char* token = strtok(bypass_copy, ",");
@@ -166,8 +168,7 @@ int apply_bypass_rules(const char* bypass_str, const char* chain, const char* ta
 
         if (strlen(token) > 0) {
             char ip_only[128];
-            strncpy(ip_only, token, sizeof(ip_only)-1);
-            ip_only[sizeof(ip_only)-1] = '\0';
+            snprintf(ip_only, sizeof(ip_only), "%s", token);
             char* slash = strchr(ip_only, '/');
             if (slash) *slash = '\0';
 
@@ -243,8 +244,7 @@ void cleanup(void) {
         // Move all remaining processes back to the parent cgroup to ensure rmdir succeeds
         char parent_tasks_file[512];
         char cg_base_path[256];
-        strncpy(cg_base_path, g_cgroup_path, sizeof(cg_base_path) - 1);
-        cg_base_path[sizeof(cg_base_path) - 1] = '\0';
+        snprintf(cg_base_path, sizeof(cg_base_path), "%s", g_cgroup_path);
         char *last_slash = strrchr(cg_base_path, '/');
         if (last_slash) {
             *last_slash = '\0';
@@ -282,7 +282,12 @@ void cleanup(void) {
 }
 
 void sig_handler(int sig) {
-    (void)sig;
+    if (sig == SIGCHLD) {
+        int saved_errno = errno;
+        while (waitpid(-1, NULL, WNOHANG) > 0);
+        errno = saved_errno;
+        return;
+    }
     g_keep_running = 0;
 }
 
@@ -532,10 +537,10 @@ int main(int argc, char *argv[]) {
                 return 0;
             case 'p': port = atoi(optarg); break;
             case 'd': redirect_dns = 1; break;
-            case 'm': strncpy(mode_str, optarg, sizeof(mode_str)-1); break;
+            case 'm': snprintf(mode_str, sizeof(mode_str), "%s", optarg); break;
             case 'o':
                 if (is_valid_ipv4(optarg)) {
-                    strncpy(override_dns, optarg, sizeof(override_dns)-1);
+                    snprintf(override_dns, sizeof(override_dns), "%s", optarg);
                 } else {
                     fprintf(stderr, "Error: Invalid IPv4 address for --override-dns (IPv6 DNS override not yet supported)\n");
                     return 1;
@@ -544,7 +549,7 @@ int main(int argc, char *argv[]) {
             case 'i': target_pid = atoi(optarg); break;
             case 'b':
                 if (is_valid_bypass_str(optarg)) {
-                    strncpy(bypass_str, optarg, sizeof(bypass_str)-1);
+                    snprintf(bypass_str, sizeof(bypass_str), "%s", optarg);
                 } else {
                     fprintf(stderr, "Error: Invalid characters in --bypass string\n");
                     return 1;
@@ -572,7 +577,7 @@ int main(int argc, char *argv[]) {
     if (strlen(bypass_str) == 0) {
         char *env_bypass = getenv("CPROXY_BYPASS");
         if (env_bypass && is_valid_bypass_str(env_bypass)) {
-            strncpy(bypass_str, env_bypass, sizeof(bypass_str)-1);
+            snprintf(bypass_str, sizeof(bypass_str), "%s", env_bypass);
         }
     }
 
@@ -584,6 +589,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
+    sigaction(SIGCHLD, &sa, NULL);
 
     const char *cg_base = "/sys/fs/cgroup/net_cls";
     struct stat st;
@@ -696,10 +702,19 @@ int main(int argc, char *argv[]) {
         }
         close(pipefd[1]);
 
-        while (waitpid(child_pid, &status, 0) == -1) {
-            if (errno == EINTR && g_keep_running == 0) {
-                kill(child_pid, SIGINT);
+        while (g_keep_running) {
+            int res = waitpid(child_pid, &status, WNOHANG);
+            if (res == child_pid) {
+                break;
+            } else if (res == -1 && errno != EINTR) {
+                perror("waitpid failed");
+                break;
             }
+            usleep(100000); // 100ms
+        }
+        if (!g_keep_running) {
+            kill(child_pid, SIGTERM);
+            waitpid(child_pid, &status, 0);
         }
     }
 
