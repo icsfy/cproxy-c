@@ -17,6 +17,7 @@
 - **TProxy 模式:** 透明代理 TCP 和 UDP 流量，支持 DNS 地址覆盖。
 - **Trace 模式:** 利用 iptables LOG 目标追踪应用程序的网络活动。
 - **接管运行中的进程:** 附加到一个已存在的 PID，代理其网络流量。
+- **IP 豁免 (Bypass):** 支持不代理指定的 IP 网段（如内网局域网），防止路由死循环。
 - **极度轻量:** 极小的内存占用，零外部依赖，毫秒级启动。
 - **后台常驻兼容:** 能够智能检测 cgroup 进程树，完美兼容后台运行的守护进程。
 
@@ -52,6 +53,12 @@ sudo ./cproxy --mode redirect --port 1080 --redirect-dns -- <你的命令>
 使用 TProxy 代理所有 TCP 和 UDP 流量（常用于 V2Ray 或 Shadowsocks 透明代理）：
 ```bash
 sudo ./cproxy --mode tproxy --port 1080 --override-dns 1.1.1.1 -- <你的命令>
+```
+
+### 绕过特定网段 (Bypass IPs)
+使用 `--bypass` 标志指定不希望被代理的局域网或公网 IP 段（支持逗号分隔多个 CIDR）：
+```bash
+sudo ./cproxy --mode tproxy --port 1080 --bypass "192.168.0.0/16,10.0.0.0/8" -- <你的命令>
 ```
 
 ### 代理已有进程

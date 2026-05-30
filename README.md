@@ -17,6 +17,7 @@ This C version achieves feature parity with the core functionalities (Redirect, 
 - **TProxy Mode:** Transparently proxy TCP and UDP traffic with optional DNS overriding.
 - **Trace Mode:** Trace application network activity using iptables LOG target.
 - **Proxy Existing Processes:** Attach to an existing PID and proxy its traffic.
+- **IP Bypass:** Ignore specific IP ranges (like local LANs) to prevent routing loops and proxying internal traffic.
 - **Lightweight:** Minimal memory footprint, zero external dependencies, and lightning-fast execution.
 
 ## Compilation
@@ -51,6 +52,12 @@ sudo ./cproxy --mode redirect --port 1080 --redirect-dns -- <your-command>
 Proxy all TCP and UDP traffic using TProxy (useful for V2Ray or Shadowsocks):
 ```bash
 sudo ./cproxy --mode tproxy --port 1080 --override-dns 1.1.1.1 -- <your-command>
+```
+
+### Bypass Specific IPs
+Use the `--bypass` flag to specify IP ranges (like LANs) that should be ignored by the proxy. Supports comma-separated CIDRs:
+```bash
+sudo ./cproxy --mode tproxy --port 1080 --bypass "192.168.0.0/16,10.0.0.0/8" -- <your-command>
 ```
 
 ### Proxy Existing Process
