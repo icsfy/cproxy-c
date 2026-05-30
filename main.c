@@ -35,6 +35,17 @@ int is_valid_ip(const char *ip) {
     return 1;
 }
 
+int is_valid_bypass_str(const char* str) {
+    if (!str) return 1;
+    for (int i = 0; str[i] != '\0'; i++) {
+        char c = str[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == '.' || c == ':' || c == '/' || c == ',' || c == ' ')) {
+            return 0; // Invalid character found
+        }
+    }
+    return 1;
+}
+
 void run_cmd(const char *cmd) {
     int ret = system(cmd);
     if (ret != 0) {
@@ -48,11 +59,11 @@ void run_cmd_silent(const char *cmd) {
 
 void apply_bypass_rules(const char* bypass_str, const char* chain, const char* table) {
     if (!bypass_str || strlen(bypass_str) == 0) return;
-    
+
     char bypass_copy[512];
     strncpy(bypass_copy, bypass_str, sizeof(bypass_copy) - 1);
     bypass_copy[sizeof(bypass_copy) - 1] = '\0';
-    
+
     char cmd[1024];
     char* token = strtok(bypass_copy, ",");
     while (token != NULL) {
@@ -60,7 +71,7 @@ void apply_bypass_rules(const char* bypass_str, const char* chain, const char* t
         while(*token == ' ') token++;
         char* end = token + strlen(token) - 1;
         while(end > token && *end == ' ') *end-- = '\0';
-        
+
         if (strlen(token) > 0) {
             snprintf(cmd, sizeof(cmd), "iptables -w -t %s -A %s -d %s -j RETURN", table, chain, token);
             run_cmd(cmd);
@@ -335,16 +346,23 @@ int main(int argc, char *argv[]) {
             case 'p': port = atoi(optarg); break;
             case 'd': redirect_dns = 1; break;
             case 'm': strncpy(mode_str, optarg, sizeof(mode_str)-1); break;
-            case 'o': 
+            case 'o':
                 if (is_valid_ip(optarg)) {
-                    strncpy(override_dns, optarg, sizeof(override_dns)-1); 
+                    strncpy(override_dns, optarg, sizeof(override_dns)-1);
                 } else {
                     fprintf(stderr, "Error: Invalid IP address for --override-dns\n");
                     return 1;
                 }
                 break;
             case 'i': target_pid = atoi(optarg); break;
-            case 'b': strncpy(bypass_str, optarg, sizeof(bypass_str)-1); break;
+            case 'b':
+                if (is_valid_bypass_str(optarg)) {
+                    strncpy(bypass_str, optarg, sizeof(bypass_str)-1);
+                } else {
+                    fprintf(stderr, "Error: Invalid characters in --bypass string\n");
+                    return 1;
+                }
+                break;
             default:
                 fprintf(stderr, "Usage: %s [--port <port>] [--mode redirect|tproxy|trace] [--pid <pid>] [--bypass <IPs>] -- <command...>\n", argv[0]);
                 return 1;
@@ -373,8 +391,6 @@ int main(int argc, char *argv[]) {
     sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
 
-    pid_t process_to_proxy = (target_pid > 0) ? target_pid : getpid();
-
     int is_v2 = 0;
     const char *cg_base = "/sys/fs/cgroup/net_cls";
     struct stat st;
@@ -383,8 +399,71 @@ int main(int argc, char *argv[]) {
         cg_base = "/sys/fs/cgroup";
     }
 
+    int pipefd[2];
+    pid_t child_pid = 0;
+    char *sudo_user = getenv("SUDO_USER");
+    char *sudo_uid_str = getenv("SUDO_UID");
+    char *sudo_gid_str = getenv("SUDO_GID");
+
+    if (target_pid == 0) {
+        if (pipe(pipefd) == -1) {
+            perror("pipe failed");
+            return 1;
+        }
+
+        child_pid = fork();
+        if (child_pid < 0) {
+            perror("fork failed");
+            return 1;
+        }
+
+        if (child_pid == 0) {
+            // Child process
+            close(pipefd[1]); // Close write end
+            char sync_buf;
+            // Wait for parent to set up cgroups and iptables
+            if (read(pipefd[0], &sync_buf, 1) <= 0) {
+                // Parent failed or died, abort execution
+                fprintf(stderr, "Initialization failed in parent, aborting child.\n");
+                _exit(1);
+            }
+            close(pipefd[0]);
+
+            if (sudo_user && sudo_uid_str && sudo_gid_str) {
+                uid_t uid = atoi(sudo_uid_str);
+                gid_t gid = atoi(sudo_gid_str);
+
+                if (initgroups(sudo_user, gid) != 0) perror("Warning: initgroups failed");
+                if (setgid(gid) != 0) { perror("setgid failed"); _exit(1); }
+                if (setuid(uid) != 0) { perror("setuid failed"); _exit(1); }
+
+                struct passwd *pw = getpwuid(uid);
+                if (pw) {
+                    setenv("HOME", pw->pw_dir, 1);
+                    setenv("USER", pw->pw_name, 1);
+                    setenv("LOGNAME", pw->pw_name, 1);
+                }
+            }
+
+            char env_str[64];
+            snprintf(env_str, sizeof(env_str), "cproxy/%d", port);
+            setenv("CPROXY_ENV", env_str, 1);
+
+            char **child_argv = &argv[optind];
+            execvp(child_argv[0], child_argv);
+            perror("execvp failed");
+            _exit(1);
+        }
+
+        // Parent process continues here
+        close(pipefd[0]); // Close read end
+    }
+
+    pid_t process_to_proxy = (target_pid > 0) ? target_pid : child_pid;
+
     if (setup_cgroup(process_to_proxy, cg_base) != 0) {
         fprintf(stderr, "Cgroup setup failed.\n");
+        if (target_pid == 0) close(pipefd[1]); // Let child die
         return 1;
     }
 
@@ -410,73 +489,27 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    char *sudo_user = getenv("SUDO_USER");
-    char *sudo_uid_str = getenv("SUDO_UID");
-    char *sudo_gid_str = getenv("SUDO_GID");
+    // Wake up child process to execute target command
+    if (write(pipefd[1], "A", 1) != 1) {
+        perror("Failed to synchronize with child");
+    }
+    close(pipefd[1]);
 
-    pid_t child_pid = fork();
-    if (child_pid < 0) {
-        perror("fork failed");
-        return 1;
+    int status;
+    while (waitpid(child_pid, &status, 0) == -1) {
+        if (errno == EINTR && g_keep_running == 0) {
+            // Sent SIGINT to child as well
+            kill(child_pid, SIGINT);
+        }
     }
 
-    if (child_pid == 0) {
-        // Child
-        if (sudo_user && sudo_uid_str && sudo_gid_str) {
-            uid_t uid = atoi(sudo_uid_str);
-            gid_t gid = atoi(sudo_gid_str);
-
-            if (initgroups(sudo_user, gid) != 0) perror("Warning: initgroups failed");
-            if (setgid(gid) != 0) { perror("setgid failed"); _exit(1); }
-            if (setuid(uid) != 0) { perror("setuid failed"); _exit(1); }
-
-            struct passwd *pw = getpwuid(uid);
-            if (pw) {
-                setenv("HOME", pw->pw_dir, 1);
-                setenv("USER", pw->pw_name, 1);
-                setenv("LOGNAME", pw->pw_name, 1);
-            }
-        }
-
-        char env_str[64];
-        snprintf(env_str, sizeof(env_str), "cproxy/%d", port);
-        setenv("CPROXY_ENV", env_str, 1);
-
-        char **child_argv = &argv[optind];
-        execvp(child_argv[0], child_argv);
-        perror("execvp failed");
-        _exit(1); // Use _exit to avoid triggering atexit handlers in child
-    } else {
-        // Parent
-        // Crucial fix: Move parent out of the target cgroup to prevent deadlock and allow rmdir
-        char parent_cg_path[256];
-        snprintf(parent_cg_path, sizeof(parent_cg_path), "%s/cgroup.procs", cg_base);
-        FILE *f = fopen(parent_cg_path, "w");
-        if (!f) {
-            snprintf(parent_cg_path, sizeof(parent_cg_path), "%s/tasks", cg_base);
-            f = fopen(parent_cg_path, "w");
-        }
-        if (f) {
-            fprintf(f, "%d\n", getpid());
-            fclose(f);
-        }
-
-        int status;
-        while (waitpid(child_pid, &status, 0) == -1) {
-            if (errno == EINTR && g_keep_running == 0) {
-                // Sent SIGINT to child as well
-                kill(child_pid, SIGINT);
-            }
-        }
-
-        // Wait for all daemonized children in the cgroup to exit
-        while (g_keep_running && !is_cgroup_empty()) {
-            sleep(1);
-        }
-
-        if (WIFEXITED(status)) return WEXITSTATUS(status);
-        else if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    // Wait for all daemonized children in the cgroup to exit
+    while (g_keep_running && !is_cgroup_empty()) {
+        sleep(1);
     }
+
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
 
     return 0;
 }
