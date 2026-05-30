@@ -83,7 +83,7 @@ int setup_iptables(pid_t pid) {
             run_cmd_silent("ip6tables -w -t raw -A %s -m cgroup --cgroup 0x%08x -j DROP", out6_chain, (1 << 16) | (pid & 0xFFFF));
         }
     } else if (g_ctx.mode == MODE_TPROXY) {
-        g_ctx.tproxy_mark = pid;
+        g_ctx.tproxy_mark = pid + 10000;
         snprintf(g_ctx.output_chain, sizeof(g_ctx.output_chain), "CP_TP_OUT_%d", pid);
         snprintf(g_ctx.prerouting_chain, sizeof(g_ctx.prerouting_chain), "CP_TP_PRE_%d", pid);
 

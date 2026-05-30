@@ -90,7 +90,15 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
                 fprintf(stderr, "  -h, --help                Show this help message\n");
                 return 0;
-            case 'p': g_ctx.port = atoi(optarg); break;
+            case 'p': {
+                int p = atoi(optarg);
+                if (p <= 0 || p > 65535) {
+                    fprintf(stderr, "Error: Invalid port: %s\n", optarg);
+                    return 1;
+                }
+                g_ctx.port = p;
+                break;
+            }
             case 'd': g_ctx.redirect_dns = 1; break;
             case 'm': snprintf(mode_str, sizeof(mode_str), "%s", optarg); break;
             case 'V': g_ctx.verbose = 1; break;
@@ -103,23 +111,25 @@ int main(int argc, char *argv[]) {
                     ret = 1; goto cleanup_all;
                 }
                 break;
-            case 'i': target_pid = atoi(optarg); break;
+            case 'i': {
+                pid_t p = (pid_t)atoi(optarg);
+                if (p <= 0) {
+                    fprintf(stderr, "Error: Invalid PID: %s\n", optarg);
+                    return 1;
+                }
+                target_pid = p;
+                break;
+            }
             case 'b':
                 if (is_valid_bypass_str(optarg)) {
                     if (g_ctx.bypass_str) {
-                        size_t old_len = strlen(g_ctx.bypass_str);
-                        size_t add_len = strlen(optarg);
-                        char *new_str = malloc(old_len + add_len + 2); // +1 for comma, +1 for null
-                        if (!new_str) {
-                            perror("malloc failed");
+                        char *old = g_ctx.bypass_str;
+                        if (asprintf(&g_ctx.bypass_str, "%s,%s", old, optarg) == -1) {
+                            perror("asprintf failed");
+                            g_ctx.bypass_str = old; // Restore to avoid double free if we were to handle it differently, but here we exit
                             ret = 1; goto cleanup_all;
                         }
-                        memcpy(new_str, g_ctx.bypass_str, old_len);
-                        new_str[old_len] = ',';
-                        memcpy(new_str + old_len + 1, optarg, add_len);
-                        new_str[old_len + 1 + add_len] = '\0';
-                        free(g_ctx.bypass_str);
-                        g_ctx.bypass_str = new_str;
+                        free(old);
                     } else {
                         g_ctx.bypass_str = strdup(optarg);
                         if (!g_ctx.bypass_str) {
