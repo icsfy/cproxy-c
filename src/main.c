@@ -51,6 +51,8 @@ void cleanup(void) {
 }
 
 int main(int argc, char *argv[]) {
+    atexit(cleanup);
+
     if (parse_args(&g_ctx, argc, argv) != 0) return 1;
     if (parse_bypass_rules(&g_ctx) != 0) return 1;
 
@@ -68,10 +70,10 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    atexit(cleanup);
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_handler;
+    sa.sa_flags = SA_RESTART;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);

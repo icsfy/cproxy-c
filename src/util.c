@@ -140,12 +140,17 @@ int parse_bypass_rules(Context *ctx) {
 }
 
 int check_dependencies(void) {
-    const char *deps[] = {"iptables", "ip", "ip6tables"};
+    const char *deps[] = {"iptables", "ip"};
     for (size_t i = 0; i < sizeof(deps) / sizeof(deps[0]); i++) {
         if (run_cmd_silent("command -v %s", deps[i]) != 0) {
             log_error("'%s' command not found. Please install it.", deps[i]);
             return -1;
         }
     }
+
+    if (run_cmd_silent("command -v ip6tables") != 0) {
+        log_warn("'ip6tables' not found. IPv6 support will be disabled.");
+    }
+
     return 0;
 }
