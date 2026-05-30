@@ -176,6 +176,9 @@ void cleanup_stale_cgroups(void) {
         struct dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
             if (strncmp(entry->d_name, "cproxy-", 7) == 0) {
+                pid_t pid = (pid_t)strtol(entry->d_name + 7, NULL, 10);
+                if (pid > 0 && is_pid_alive(pid)) continue;
+
                 char path[PATH_MAX];
                 snprintf(path, sizeof(path), "%s/%s", bases[b], entry->d_name);
 

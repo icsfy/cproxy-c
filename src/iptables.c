@@ -31,10 +31,9 @@ static int setup_tproxy_routing(int mark, int family) {
 
 static void cleanup_tproxy_routing(int mark, int family) {
     const char *ip_cmd = (family == AF_INET6) ? "ip -6" : "ip";
-    const char *any_addr = (family == AF_INET6) ? "::/0" : "0.0.0.0/0";
     if (mark == 0) return;
     run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);
-    run_cmd_silent("%s route delete local %s dev lo table %d", ip_cmd, any_addr, mark);
+    run_cmd_silent("%s route flush table %d", ip_cmd, mark);
 }
 
 int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match) {
@@ -288,30 +287,44 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     if (!fp) return;
 
     char line[512];
-    char chains[128][64];
+    // Use a linked list or just process in two passes to avoid missing chains
+    // For simplicity and safety, we'll collect names of stale chains first
+    char **stale_chains = NULL;
     int count = 0;
+    int capacity = 0;
 
-    while (fgets(line, sizeof(line), fp) && count < 128) {
+    while (fgets(line, sizeof(line), fp)) {
         if (strncmp(line, "-N CP", 5) == 0) {
-            char *name = line + 3;
-            char *space = strchr(name, ' ');
-            if (space) *space = '\0';
-            else {
-                char *newline = strchr(name, '\n');
-                if (newline) *newline = '\0';
+            char name[64];
+            if (sscanf(line + 3, "%63s", name) != 1) continue;
+
+            // Extract PID
+            char *last_underscore = strrchr(name, '_');
+            if (!last_underscore) continue;
+
+            pid_t pid = (pid_t)strtol(last_underscore + 1, NULL, 10);
+            if (pid > 0 && is_pid_alive(pid)) {
+                // PID is alive, not stale
+                continue;
             }
-            snprintf(chains[count++], 64, "%.63s", name);
+
+            if (count >= capacity) {
+                capacity = capacity == 0 ? 16 : capacity * 2;
+                stale_chains = realloc(stale_chains, capacity * sizeof(char *));
+            }
+            stale_chains[count++] = strdup(name);
         }
     }
     pclose(fp);
 
     for (int i = 0; i < count; i++) {
+        log_debug("Cleaning up stale chain %s in table %s", stale_chains[i], table);
         // Find where this chain is referenced
         snprintf(cmd, sizeof(cmd), "%s -t %s -S", iptables_cmd, table);
         fp = popen(cmd, "r");
         if (fp) {
             while (fgets(line, sizeof(line), fp)) {
-                if (strstr(line, chains[i]) && strncmp(line, "-A ", 3) == 0) {
+                if (strstr(line, stale_chains[i]) && strncmp(line, "-A ", 3) == 0) {
                     char *rule = line + 3;
                     char *newline = strchr(rule, '\n');
                     if (newline) *newline = '\0';
@@ -320,9 +333,11 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
             }
             pclose(fp);
         }
-        run_cmd_silent("%s -t %s -F %s", iptables_cmd, table, chains[i]);
-        run_cmd_silent("%s -t %s -X %s", iptables_cmd, table, chains[i]);
+        run_cmd_silent("%s -t %s -F %s", iptables_cmd, table, stale_chains[i]);
+        run_cmd_silent("%s -t %s -X %s", iptables_cmd, table, stale_chains[i]);
+        free(stale_chains[i]);
     }
+    free(stale_chains);
 }
 
 static void cleanup_stale_ip_rules(void) {
@@ -342,6 +357,10 @@ static void cleanup_stale_ip_rules(void) {
                 if (((p = strstr(line, "lookup ")) && sscanf(p + 7, "%u", &table) == 1) ||
                     ((p = strstr(line, "table ")) && sscanf(p + 6, "%u", &table) == 1)) {
                     if (mark == table && mark >= 10000) {
+                        pid_t pid = (pid_t)(mark - 10000);
+                        if (is_pid_alive(pid)) continue;
+
+                        log_debug("Cleaning up stale ip rule for mark 0x%x", mark);
                         run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table);
                         run_cmd_silent("%s route flush table %u", cmds[i], table);
                     }

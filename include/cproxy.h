@@ -75,6 +75,7 @@ int run_cmd_silent(const char *fmt, ...);
 int is_valid_ipv4(const char *ip);
 int is_valid_ipv6(const char *ip);
 int is_valid_bypass_str(const char* str);
+int is_pid_alive(pid_t pid);
 int parse_bypass_rules(Context *ctx);
 int check_dependencies(void);
 

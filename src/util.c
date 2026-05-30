@@ -38,6 +38,11 @@ int is_valid_ipv6(const char *ip) {
     return inet_pton(AF_INET6, ip, &addr) == 1;
 }
 
+int is_pid_alive(pid_t pid) {
+    if (pid <= 0) return 0;
+    return kill(pid, 0) == 0 || errno != ESRCH;
+}
+
 int is_valid_bypass_str(const char* str) {
     if (!str || strlen(str) == 0) return 1;
     char* copy = strdup(str);
