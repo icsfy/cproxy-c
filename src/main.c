@@ -3,11 +3,12 @@
 // Global context
 Context g_ctx = {
     .port = 1080,
-    .redirect_dns = 0,
+    .redirect_dns = false,
     .mode = MODE_REDIRECT,
-    .verbose = 0,
+    .verbose = false,
+    .dry_run = false,
     .tproxy_mark = 0,
-    .cgroup_created = 0,
+    .cgroup_created = false,
     .target_pid = 0
 };
 

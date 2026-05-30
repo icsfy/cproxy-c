@@ -27,21 +27,21 @@ enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
 typedef struct {
     int port;
-    int redirect_dns;
+    bool redirect_dns;
     enum Mode mode;
     char override_dns[64];
     char *bypass_str;
     pid_t target_pid;
-    int verbose;
-    int dry_run;
+    bool verbose;
+    bool dry_run;
     int is_v2;
     char cg_base[PATH_MAX];
     char cgroup_path[PATH_MAX];
     char output_chain[128];
     char prerouting_chain[128];
     int tproxy_mark;
-    int has_override_dns;
-    int cgroup_created;
+    bool has_override_dns;
+    bool cgroup_created;
 } Context;
 
 extern Context g_ctx;
