@@ -229,8 +229,6 @@ void setup_iptables_tproxy(pid_t pid, int port, const char* override_dns, int is
     // Mangle PREROUTING
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -N %s", g_prerouting_chain); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A PREROUTING -j %s", g_prerouting_chain); run_cmd(cmd);
-    snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -o lo -j RETURN", g_prerouting_chain); run_cmd(cmd);
-    snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -o lo -j RETURN", g_prerouting_chain); run_cmd(cmd);
     apply_bypass_rules(bypass_str, g_prerouting_chain, "mangle"); // Bypass in PREROUTING
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p udp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port); run_cmd(cmd);
     snprintf(cmd, sizeof(cmd), "iptables -w -t mangle -A %s -p tcp -m mark --mark %d -j TPROXY --on-ip 127.0.0.1 --on-port %d", g_prerouting_chain, g_tproxy_mark, port); run_cmd(cmd);
