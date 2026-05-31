@@ -32,6 +32,7 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 
 clean:
-	rm -f $(TARGET) src/*.o
+	rm -f $(TARGET) src/*.o proxy.log vgcore.*
+	rm -rf build
 
 .PHONY: all clean install uninstall

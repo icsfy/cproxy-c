@@ -45,7 +45,7 @@ static void get_current_cgroup_path(char *buf, size_t len) {
             char *nl = strchr(p, '\n');
             if (nl) *nl = '\0';
             if (strcmp(p, "/") == 0) buf[0] = '\0';
-            else strncpy(buf, p, len - 1);
+            else snprintf(buf, len, "%s", p);
             break;
         }
     }

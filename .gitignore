@@ -28,3 +28,11 @@ cproxy-c
 proxy.log
 __pycache__/
 vgcore.*
+
+# CMake build directories and cache files
+/build/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CMakeSettings.json
+cmake_install.cmake

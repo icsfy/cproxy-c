@@ -311,7 +311,7 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     int stale_count = 0;
     int stale_capacity = 0;
 
-    char line[512];
+    char line[4096];
     while (fgets(line, sizeof(line), fp)) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';

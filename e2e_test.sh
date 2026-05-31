@@ -38,7 +38,7 @@ run_test() {
 
     # Start proxy server in background
     sudo rm -f proxy.log
-    sudo python3 -u test_proxy.py "$mode" $PROXY_PORT > proxy.log 2>&1 &
+    setsid sudo python3 -u test_proxy.py "$mode" $PROXY_PORT > proxy.log 2>&1 &
     PROXY_PID=$!
 
     # Wait for proxy to start
