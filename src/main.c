@@ -107,7 +107,9 @@ int main(int argc, char *argv[]) {
         if (child_pid == 0) {
             close(pipefd[1]);
             char sync_buf;
-            if (read(pipefd[0], &sync_buf, 1) <= 0)
+            ssize_t nread;
+            while ((nread = read(pipefd[0], &sync_buf, 1)) == -1 && errno == EINTR);
+            if (nread <= 0)
                 _exit(1);
             close(pipefd[0]);
 
@@ -135,7 +137,9 @@ int main(int argc, char *argv[]) {
         printf("Proxying PID %d. Press Ctrl+C to stop...\n", g_ctx.target_pid);
         wait_for_process(g_ctx.target_pid);
     } else {
-        if (write(pipefd[1], "A", 1) != 1) perror("Sync failed");
+        ssize_t nwritten;
+        while ((nwritten = write(pipefd[1], "A", 1)) == -1 && errno == EINTR);
+        if (nwritten != 1) perror("Sync failed");
         close(pipefd[1]);
 
         int status = 0;
@@ -147,7 +151,7 @@ int main(int argc, char *argv[]) {
 
         if (!g_keep_running && kill(child_pid, 0) == 0) {
             kill(child_pid, SIGTERM);
-            waitpid(child_pid, &status, 0);
+            while (waitpid(child_pid, &status, 0) == -1 && errno == EINTR);
         }
 
         int wait_timeout = 50; // 5s

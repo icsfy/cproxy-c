@@ -138,7 +138,7 @@ void cleanup_cgroup(void) {
 
     // Move processes to parent
     char parent_path[PATH_MAX];
-    strncpy(parent_path, g_ctx.cgroup_path, sizeof(parent_path));
+    snprintf(parent_path, sizeof(parent_path), "%s", g_ctx.cgroup_path);
     char *last_slash = strrchr(parent_path, '/');
     if (last_slash) {
         *last_slash = '\0';
@@ -152,12 +152,31 @@ void cleanup_cgroup(void) {
         }
 
         if (f) {
+            pid_t *pids = NULL;
+            int count = 0;
+            int capacity = 0;
             char buf[32];
             while (fgets(buf, sizeof(buf), f)) {
                 pid_t pid = (pid_t)strtol(buf, NULL, 10);
-                if (pid > 0) add_pid_to_cgroup(pid, parent_path);
+                if (pid > 0) {
+                    if (count >= capacity) {
+                        capacity = capacity == 0 ? 16 : capacity * 2;
+                        pid_t *temp = realloc(pids, capacity * sizeof(pid_t));
+                        if (!temp) {
+                            perror("realloc failed");
+                            break;
+                        }
+                        pids = temp;
+                    }
+                    pids[count++] = pid;
+                }
             }
             fclose(f);
+
+            for (int i = 0; i < count; i++) {
+                add_pid_to_cgroup(pids[i], parent_path);
+            }
+            free(pids);
         }
     }
 
@@ -167,22 +186,41 @@ void cleanup_cgroup(void) {
     g_ctx.cgroup_created = 0;
 }
 
-void cleanup_stale_cgroups(void) {
-    const char *bases[] = {"/sys/fs/cgroup", "/sys/fs/cgroup/net_cls"};
-    for (int b = 0; b < 2; b++) {
-        DIR *dir = opendir(bases[b]);
-        if (!dir) continue;
+static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {
+    if (depth > 5) return; // Prevent too deep recursion or loops
 
-        struct dirent *entry;
-        while ((entry = readdir(dir)) != NULL) {
-            if (strncmp(entry->d_name, "cproxy-", 7) == 0) {
-                pid_t pid = (pid_t)strtol(entry->d_name + 7, NULL, 10);
-                if (pid > 0 && is_pid_alive(pid)) continue;
+    DIR *dir = opendir(base_path);
+    if (!dir) return;
 
-                char path[PATH_MAX];
-                snprintf(path, sizeof(path), "%s/%s", bases[b], entry->d_name);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
 
+        char path[PATH_MAX];
+        if (snprintf(path, sizeof(path), "%s/%s", base_path, entry->d_name) >= (int)sizeof(path)) {
+            continue;
+        }
+
+        // Determine if it's a directory
+        bool is_dir = false;
+        if (entry->d_type == DT_DIR) {
+            is_dir = true;
+        } else if (entry->d_type == DT_UNKNOWN) {
+            struct stat st;
+            if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                is_dir = true;
+            }
+        }
+
+        if (strncmp(entry->d_name, "cproxy-", 7) == 0) {
+            pid_t pid = (pid_t)strtol(entry->d_name + 7, NULL, 10);
+            if (pid > 0 && !is_pid_alive(pid)) {
                 // Try to move processes to parent first
+                char parent_path[PATH_MAX];
+                snprintf(parent_path, sizeof(parent_path), "%s", base_path);
+
                 char procs_path[PATH_MAX + 64];
                 snprintf(procs_path, sizeof(procs_path), "%s/cgroup.procs", path);
                 FILE *f = fopen(procs_path, "r");
@@ -190,20 +228,49 @@ void cleanup_stale_cgroups(void) {
                     snprintf(procs_path, sizeof(procs_path), "%s/tasks", path);
                     f = fopen(procs_path, "r");
                 }
+
                 if (f) {
+                    pid_t *pids = NULL;
+                    int count = 0;
+                    int capacity = 0;
                     char buf[32];
                     while (fgets(buf, sizeof(buf), f)) {
-                        pid_t pid = (pid_t)strtol(buf, NULL, 10);
-                        if (pid > 0) add_pid_to_cgroup(pid, bases[b]);
+                        pid_t pid_val = (pid_t)strtol(buf, NULL, 10);
+                        if (pid_val > 0) {
+                            if (count >= capacity) {
+                                capacity = capacity == 0 ? 16 : capacity * 2;
+                                pid_t *temp = realloc(pids, capacity * sizeof(pid_t));
+                                if (!temp) {
+                                    perror("realloc failed");
+                                    break;
+                                }
+                                pids = temp;
+                            }
+                            pids[count++] = pid_val;
+                        }
                     }
                     fclose(f);
+
+                    for (int i = 0; i < count; i++) {
+                        add_pid_to_cgroup(pids[i], parent_path);
+                    }
+                    free(pids);
                 }
 
                 if (rmdir(path) == 0) {
                     log_info("Removed stale cgroup: %s", path);
                 }
             }
+        } else if (is_dir) {
+            cleanup_stale_cgroups_recursive(path, depth + 1);
         }
-        closedir(dir);
+    }
+    closedir(dir);
+}
+
+void cleanup_stale_cgroups(void) {
+    const char *bases[] = {"/sys/fs/cgroup", "/sys/fs/cgroup/net_cls"};
+    for (int b = 0; b < 2; b++) {
+        cleanup_stale_cgroups_recursive(bases[b], 0);
     }
 }

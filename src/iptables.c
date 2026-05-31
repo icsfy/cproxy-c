@@ -279,6 +279,22 @@ void cleanup_iptables(void) {
     }
 }
 
+static bool is_word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+
+static bool is_exact_chain_match(const char *rule, const char *chain) {
+    size_t chain_len = strlen(chain);
+    const char *p = rule;
+    while ((p = strstr(p, chain)) != NULL) {
+        bool before_ok = (p == rule || !is_word_char(p[-1]));
+        bool after_ok = (!is_word_char(p[chain_len]));
+        if (before_ok && after_ok) return true;
+        p += chain_len;
+    }
+    return false;
+}
+
 static void cleanup_chains_in_table(const char *table, const char *iptables_cmd) {
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "%s -t %s -S", iptables_cmd, table);
@@ -302,7 +318,12 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
 
         if (rule_count >= rule_capacity) {
             rule_capacity = rule_capacity == 0 ? 64 : rule_capacity * 2;
-            all_rules = realloc(all_rules, rule_capacity * sizeof(char *));
+            char **temp = realloc(all_rules, rule_capacity * sizeof(char *));
+            if (!temp) {
+                perror("realloc failed");
+                break;
+            }
+            all_rules = temp;
         }
         all_rules[rule_count++] = strdup(line);
 
@@ -315,7 +336,12 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
                     if (pid > 0 && !is_pid_alive(pid)) {
                         if (stale_count >= stale_capacity) {
                             stale_capacity = stale_capacity == 0 ? 16 : stale_capacity * 2;
-                            stale_chains = realloc(stale_chains, stale_capacity * sizeof(char *));
+                            char **temp = realloc(stale_chains, stale_capacity * sizeof(char *));
+                            if (!temp) {
+                                perror("realloc failed");
+                                break;
+                            }
+                            stale_chains = temp;
                         }
                         stale_chains[stale_count++] = strdup(name);
                     }
@@ -326,8 +352,10 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     pclose(fp);
 
     if (stale_count == 0) {
-        for (int i = 0; i < rule_count; i++) free(all_rules[i]);
-        free(all_rules);
+        if (all_rules) {
+            for (int i = 0; i < rule_count; i++) free(all_rules[i]);
+            free(all_rules);
+        }
         return;
     }
 
@@ -335,8 +363,12 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     for (int i = 0; i < stale_count; i++) {
         log_debug("Cleaning up stale chain %s in table %s", stale_chains[i], table);
         for (int j = 0; j < rule_count; j++) {
-            if (strncmp(all_rules[j], "-A ", 3) == 0 && strstr(all_rules[j], stale_chains[i])) {
-                run_cmd_silent("%s -t %s -D %s", iptables_cmd, table, all_rules[j] + 3);
+            if (strncmp(all_rules[j], "-A ", 3) == 0 && is_exact_chain_match(all_rules[j], stale_chains[i])) {
+                char prefix[128];
+                snprintf(prefix, sizeof(prefix), "-A %s ", stale_chains[i]);
+                if (strncmp(all_rules[j], prefix, strlen(prefix)) != 0) {
+                    run_cmd_silent("%s -t %s -D %s", iptables_cmd, table, all_rules[j] + 3);
+                }
             }
         }
     }
@@ -348,8 +380,10 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
         free(stale_chains[i]);
     }
 
-    for (int i = 0; i < rule_count; i++) free(all_rules[i]);
-    free(all_rules);
+    if (all_rules) {
+        for (int i = 0; i < rule_count; i++) free(all_rules[i]);
+        free(all_rules);
+    }
     free(stale_chains);
 }
 

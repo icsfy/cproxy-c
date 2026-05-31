@@ -29,9 +29,11 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         _exit(127);
     } else if (pid > 0) {
         int status;
-        if (waitpid(pid, &status, 0) == -1) {
-            if (!silent || g_ctx.verbose) perror("waitpid failed");
-            return -1;
+        while (waitpid(pid, &status, 0) == -1) {
+            if (errno != EINTR) {
+                if (!silent || g_ctx.verbose) perror("waitpid failed");
+                return -1;
+            }
         }
 
         int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;

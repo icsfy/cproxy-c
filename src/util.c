@@ -119,10 +119,13 @@ int parse_bypass_rules(Context *ctx) {
     int idx = 0;
     while (token) {
         while (*token == ' ') token++;
-        char *end = token + strlen(token) - 1;
-        while (end > token && *end == ' ') *end-- = '\0';
+        size_t len = strlen(token);
+        while (len > 0 && token[len-1] == ' ') {
+            token[len-1] = '\0';
+            len--;
+        }
 
-        if (strlen(token) > 0) {
+        if (len > 0) {
             snprintf(ctx->bypass_rules[idx].addr, sizeof(ctx->bypass_rules[idx].addr), "%s", token);
 
             char ip_only[64];
