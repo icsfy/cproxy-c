@@ -35,4 +35,4 @@ clean:
 	rm -f $(TARGET) src/*.o proxy.log vgcore.*
 	rm -rf build
 
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall test e2e debug

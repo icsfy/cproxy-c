@@ -36,3 +36,4 @@ CMakeCache.txt
 CMakeFiles/
 CMakeSettings.json
 cmake_install.cmake
+.cache/

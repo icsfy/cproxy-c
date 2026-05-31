@@ -17,6 +17,12 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
 
     pid_t pid = fork();
     if (pid == 0) {
+        // Reset signal mask so child processes aren't stuck with blocked signals
+        // (important when called from cleanup() which blocks all signals)
+        sigset_t empty;
+        sigemptyset(&empty);
+        sigprocmask(SIG_SETMASK, &empty, NULL);
+
         if (silent && !g_ctx.verbose) {
             int devnull = open("/dev/null", O_WRONLY);
             if (devnull != -1) {

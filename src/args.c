@@ -20,7 +20,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:VDC hv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:VDChv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
@@ -37,6 +37,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
                 fprintf(stderr, "  -C, --clean               Cleanup stale iptables rules and cgroups\n");
                 fprintf(stderr, "  -h, --help                Show this help message\n");
+                fprintf(stderr, "  -v, --version             Show version information\n");
                 exit(0);
             case 'p': {
                 char *endptr;

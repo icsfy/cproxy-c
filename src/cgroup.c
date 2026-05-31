@@ -214,7 +214,7 @@ static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {
             }
         }
 
-        if (strncmp(entry->d_name, "cproxy-", 7) == 0) {
+        if (strncmp(entry->d_name, "cproxy-", 7) == 0 && is_dir) {
             pid_t pid = (pid_t)strtol(entry->d_name + 7, NULL, 10);
             if (pid > 0 && !is_pid_alive(pid)) {
                 // Try to move processes to parent first

@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_handler;
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = 0; // Disable SA_RESTART so waitpid can be interrupted by signals
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
@@ -151,7 +151,18 @@ int main(int argc, char *argv[]) {
 
         if (!g_keep_running && kill(child_pid, 0) == 0) {
             kill(child_pid, SIGTERM);
-            while (waitpid(child_pid, &status, 0) == -1 && errno == EINTR);
+            int wait_attempts = 30; // 3 seconds
+            while (wait_attempts-- > 0) {
+                int r = waitpid(child_pid, &status, WNOHANG);
+                if (r == child_pid) break;
+                if (r == -1 && errno != EINTR) break;
+                usleep(100000);
+            }
+            if (kill(child_pid, 0) == 0) {
+                log_warn("Child process did not exit after SIGTERM, sending SIGKILL...");
+                kill(child_pid, SIGKILL);
+                while (waitpid(child_pid, &status, 0) == -1 && errno == EINTR);
+            }
         }
 
         int wait_timeout = 50; // 5s
