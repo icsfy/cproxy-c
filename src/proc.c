@@ -37,7 +37,22 @@ void drop_privileges(void) {
             setenv("HOME", pw->pw_dir, 1);
             setenv("USER", pw->pw_name, 1);
             setenv("LOGNAME", pw->pw_name, 1);
+            if (pw->pw_shell && pw->pw_shell[0]) {
+                setenv("SHELL", pw->pw_shell, 1);
+            }
+
+            // Restore XDG_RUNTIME_DIR which is often stripped by sudo
+            // and required by many user-space Linux programs (DBus, PulseAudio, etc.)
+            char xdg_dir[64];
+            snprintf(xdg_dir, sizeof(xdg_dir), "/run/user/%u", uid);
+            setenv("XDG_RUNTIME_DIR", xdg_dir, 0); // 0 = don't overwrite if user passed it via sudo -E
         }
+
+        // Unset SUDO_* variables so the child process doesn't behave unexpectedly
+        unsetenv("SUDO_USER");
+        unsetenv("SUDO_UID");
+        unsetenv("SUDO_GID");
+        unsetenv("SUDO_COMMAND");
     }
 }
 
