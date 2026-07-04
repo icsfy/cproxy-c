@@ -299,7 +299,8 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "%s -t %s -S", iptables_cmd, table);
 
-    FILE *fp = popen(cmd, "r");
+    pid_t popen_pid = -1;
+    FILE *fp = safe_popen(cmd, &popen_pid);
     if (!fp) return;
 
     // First pass: Collect all rules and identify stale chains
@@ -349,7 +350,7 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
             }
         }
     }
-    pclose(fp);
+    safe_pclose(fp, popen_pid);
 
     if (stale_count == 0) {
         if (all_rules) {
@@ -392,7 +393,8 @@ static void cleanup_stale_ip_rules(void) {
     for (int i = 0; i < 2; i++) {
         char list_cmd[64];
         snprintf(list_cmd, sizeof(list_cmd), "%s rule show", cmds[i]);
-        FILE *fp = popen(list_cmd, "r");
+        pid_t popen_pid = -1;
+        FILE *fp = safe_popen(list_cmd, &popen_pid);
         if (!fp) continue;
 
         char line[512];
@@ -414,7 +416,7 @@ static void cleanup_stale_ip_rules(void) {
                 }
             }
         }
-        pclose(fp);
+        safe_pclose(fp, popen_pid);
     }
 }
 

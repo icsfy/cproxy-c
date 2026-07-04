@@ -32,6 +32,9 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
             perror("setgid failed in run_cmd");
         }
 
+        clearenv();
+        setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+
         if (silent && !g_ctx.verbose) {
             int devnull = open("/dev/null", O_WRONLY);
             if (devnull != -1) {
@@ -96,4 +99,46 @@ int run_cmd_silent(const char *fmt, ...) {
     int res = run_cmd_v(fmt, args, 1);
     va_end(args);
     return res;
+}
+
+FILE *safe_popen(const char *cmd, pid_t *pid_out) {
+    int fd[2];
+    if (pipe(fd) < 0) return NULL;
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(fd[0]);
+        close(fd[1]);
+        return NULL;
+    }
+    if (pid == 0) {
+        sigset_t empty;
+        sigemptyset(&empty);
+        sigprocmask(SIG_SETMASK, &empty, NULL);
+
+        close(fd[0]);
+        dup2(fd[1], STDOUT_FILENO);
+        close(fd[1]);
+
+        if (setuid(geteuid()) != 0) perror("setuid failed in safe_popen");
+        if (setgid(getegid()) != 0) perror("setgid failed in safe_popen");
+
+        clearenv();
+        setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    close(fd[1]);
+    *pid_out = pid;
+    return fdopen(fd[0], "r");
+}
+
+void safe_pclose(FILE *fp, pid_t pid) {
+    if (fp) fclose(fp);
+    if (pid > 0) {
+        int status;
+        while (waitpid(pid, &status, 0) == -1) {
+            if (errno != EINTR) break;
+        }
+    }
 }
