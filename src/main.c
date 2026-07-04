@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
     if (parse_args(&g_ctx, argc, argv) != 0) return 1;
     if (parse_bypass_rules(&g_ctx) != 0) return 1;
 
-    if (!g_ctx.dry_run && getuid() != 0) {
+    if (!g_ctx.dry_run && geteuid() != 0) {
         log_error("cproxy must be run as root (use sudo)");
         return 1;
     }
