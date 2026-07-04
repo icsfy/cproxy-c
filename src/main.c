@@ -126,6 +126,12 @@ int main(int argc, char *argv[]) {
     }
 
     pid_t process_to_proxy = is_attaching ? g_ctx.target_pid : child_pid;
+
+    if (is_attaching && check_process_ownership(process_to_proxy) != 0) {
+        if (!is_attaching) close(pipefd[1]); // Just in case, though it's is_attaching
+        return 1;
+    }
+
     g_ctx.target_pid = process_to_proxy; // Ensure cleanup knows which PID to use
 
     if (setup_cgroup(process_to_proxy) != 0 || setup_iptables(process_to_proxy) != 0) {

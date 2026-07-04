@@ -96,6 +96,7 @@ void cleanup_stale_iptables(void);
 int parse_args(Context *ctx, int argc, char *argv[]);
 int wait_for_process(pid_t pid);
 void drop_privileges(void);
+int check_process_ownership(pid_t pid);
 
 // Cleanup
 void cleanup(void);

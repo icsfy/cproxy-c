@@ -11,24 +11,50 @@ static int my_pidfd_open(pid_t pid, unsigned int flags) {
 }
 
 void drop_privileges(void) {
+    uid_t ruid = getuid();
+    uid_t euid = geteuid();
+    gid_t rgid = getgid();
+
     char *sudo_user = getenv("SUDO_USER");
     char *sudo_uid_str = getenv("SUDO_UID");
     char *sudo_gid_str = getenv("SUDO_GID");
 
-    if (sudo_user && sudo_uid_str && sudo_gid_str) {
-        uid_t uid = (uid_t)strtol(sudo_uid_str, NULL, 10);
-        gid_t gid = (gid_t)strtol(sudo_gid_str, NULL, 10);
+    uid_t target_uid = 0;
+    gid_t target_gid = 0;
+    struct passwd *pw = NULL;
 
-        struct passwd *pw = getpwuid(uid);
-        if (initgroups(sudo_user, gid) != 0) {
-            perror("initgroups failed");
-            _exit(1);
+    if (sudo_user && sudo_uid_str && sudo_gid_str) {
+        target_uid = (uid_t)strtol(sudo_uid_str, NULL, 10);
+        target_gid = (gid_t)strtol(sudo_gid_str, NULL, 10);
+        pw = getpwuid(target_uid);
+    } else if (ruid != 0 || euid == 0) {
+        // Not run via sudo, but might be setuid root.
+        // If ruid != 0, an unprivileged user ran the binary.
+        if (ruid != 0) {
+            target_uid = ruid;
+            target_gid = rgid;
+            pw = getpwuid(target_uid);
         }
-        if (setgid(gid) != 0) {
+    }
+
+    if (target_uid != 0) {
+        if (pw) {
+            if (initgroups(pw->pw_name, target_gid) != 0) {
+                perror("initgroups failed");
+                _exit(1);
+            }
+        } else {
+            if (setgroups(1, &target_gid) != 0) {
+                perror("setgroups failed");
+                _exit(1);
+            }
+        }
+
+        if (setgid(target_gid) != 0) {
             perror("setgid failed");
             _exit(1);
         }
-        if (setuid(uid) != 0) {
+        if (setuid(target_uid) != 0) {
             perror("setuid failed");
             _exit(1);
         }
@@ -44,7 +70,7 @@ void drop_privileges(void) {
             // Restore XDG_RUNTIME_DIR which is often stripped by sudo
             // and required by many user-space Linux programs (DBus, PulseAudio, etc.)
             char xdg_dir[64];
-            snprintf(xdg_dir, sizeof(xdg_dir), "/run/user/%u", uid);
+            snprintf(xdg_dir, sizeof(xdg_dir), "/run/user/%u", target_uid);
             setenv("XDG_RUNTIME_DIR", xdg_dir, 0); // 0 = don't overwrite if user passed it via sudo -E
         }
 
@@ -79,6 +105,24 @@ int wait_for_process(pid_t pid) {
             if (kill(pid, 0) == -1 && errno == ESRCH) break;
             usleep(100000);
         }
+    }
+    return 0;
+}
+
+int check_process_ownership(pid_t pid) {
+    if (getuid() == 0) return 0; // root can attach to anything
+
+    char path[256];
+    snprintf(path, sizeof(path), "/proc/%d", pid);
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        log_error("Could not access PID %d", pid);
+        return -1;
+    }
+
+    if (st.st_uid != getuid()) {
+        log_error("Permission denied: You do not own PID %d", pid);
+        return -1;
     }
     return 0;
 }

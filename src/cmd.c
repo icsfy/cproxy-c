@@ -23,6 +23,15 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         sigemptyset(&empty);
         sigprocmask(SIG_SETMASK, &empty, NULL);
 
+        // If cproxy is setuid root, bash will drop privileges back to the real UID unless
+        // we explicitly set the real UID to match the effective UID (0).
+        if (setuid(geteuid()) != 0) {
+            perror("setuid failed in run_cmd");
+        }
+        if (setgid(getegid()) != 0) {
+            perror("setgid failed in run_cmd");
+        }
+
         if (silent && !g_ctx.verbose) {
             int devnull = open("/dev/null", O_WRONLY);
             if (devnull != -1) {
