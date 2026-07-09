@@ -144,8 +144,10 @@ static int apply_tproxy_rules_for_family(int family, pid_t pid, const char *cg_m
         CHECK(run_cmd("%s -w -t mangle -A %s -p udp -o lo -j RETURN", ipt_cmd, out));
     }
 
-    CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", ipt_cmd, out, g_ctx.tproxy_mark));
-    CHECK(run_cmd("%s -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", ipt_cmd, out, g_ctx.tproxy_mark));
+    CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -m conntrack --ctstate NEW -j CONNMARK --set-mark 0x%x", ipt_cmd, out, g_ctx.tproxy_mark));
+    CHECK(run_cmd("%s -w -t mangle -A %s -p udp -m conntrack --ctstate NEW -j CONNMARK --set-mark 0x%x", ipt_cmd, out, g_ctx.tproxy_mark));
+    CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -j CONNMARK --restore-mark", ipt_cmd, out));
+    CHECK(run_cmd("%s -w -t mangle -A %s -p udp -j CONNMARK --restore-mark", ipt_cmd, out));
 
     return 0;
 }

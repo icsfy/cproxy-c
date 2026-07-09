@@ -20,7 +20,7 @@
 #include <fcntl.h>
 #include <limits.h>
 
-#define CPROXY_VERSION "1.2.1"
+#define CPROXY_VERSION "1.2.2"
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
