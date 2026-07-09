@@ -106,6 +106,43 @@ run_test() {
         fi
     fi
 
+    # 5. Inbound Connection (Server) Test
+    log_info "Testing inbound connection bypass (Server Mode)..."
+    SERVER_PORT=$((PROXY_PORT + 1000))
+    cat << 'EOF' > test_server.py
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', int(sys.argv[1])))
+s.listen(1)
+while True:
+    try:
+        conn, addr = s.accept()
+        conn.sendall(b"HTTP/1.1 200 OK\r\n\r\ninbound works!")
+        conn.close()
+    except:
+        break
+EOF
+    # Run the server under cproxy
+    sudo ./cproxy --mode "$mode" --port $PROXY_PORT -- python3 test_server.py $SERVER_PORT > /dev/null 2>&1 &
+    SERVER_PID=$!
+
+    wait_for_port $SERVER_PORT || { log_error "Test server failed to start"; sudo kill $SERVER_PID 2>/dev/null; exit 1; }
+
+    # Test from outside
+    OUTPUT=$(curl -s -m 5 http://127.0.0.1:$SERVER_PORT)
+
+    if [[ "$OUTPUT" == *"inbound works!"* ]]; then
+        log_info "PASS: $mode mode allows inbound connections"
+    else
+        log_error "FAIL: $mode mode inbound connections broken"
+        sudo kill $SERVER_PID 2>/dev/null
+        exit 1
+    fi
+    sudo kill $SERVER_PID 2>/dev/null
+    wait $SERVER_PID 2>/dev/null
+    rm -f test_server.py
+
     # Kill proxy for next test
     sudo kill $PROXY_PID 2>/dev/null
     wait $PROXY_PID 2>/dev/null
