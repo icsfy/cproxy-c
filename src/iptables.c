@@ -88,17 +88,14 @@ static int setup_redirect(pid_t pid, const char *cg_match) {
     CHECK(init_chain("nat", out4, "OUTPUT", "iptables", cg_match));
     CHECK(apply_bypass_rules(out4, "nat", "iptables"));
 
-    CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", out4));
-    CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", out4));
-
-    if (!g_ctx.redirect_dns) {
-        CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j RETURN", out4));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j RETURN", out4));
-    }
-
     if (g_ctx.redirect_dns) {
+        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", out4));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", out4));
         CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
         CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
+    } else {
+        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo -j RETURN", out4));
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo -j RETURN", out4));
     }
     CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out4, g_ctx.port));
 
@@ -112,78 +109,78 @@ static int setup_redirect(pid_t pid, const char *cg_match) {
     return 0;
 }
 
+static int apply_tproxy_rules_for_family(int family, pid_t pid, const char *cg_match, const char *mark_match) {
+    bool is_ipv6 = (family == AF_INET6);
+    const char *ipt_cmd = is_ipv6 ? "ip6tables" : "iptables";
+    const char *lo_ip = is_ipv6 ? "::1" : "127.0.0.1";
+
+    char pre[128], out[128];
+    get_chain_name(pre, sizeof(pre), "TP_PRE", pid, is_ipv6);
+    get_chain_name(out, sizeof(out), "TP_OUT", pid, is_ipv6);
+
+    CHECK(setup_tproxy_routing(g_ctx.tproxy_mark, family));
+
+    CHECK(init_chain("mangle", pre, "PREROUTING", ipt_cmd, mark_match));
+    CHECK(apply_bypass_rules(pre, "mangle", ipt_cmd));
+
+    if (g_ctx.dns_port != g_ctx.port) {
+        CHECK(run_cmd("%s -w -t mangle -A %s -p udp --dport 53 -j TPROXY --on-ip %s --on-port %d", ipt_cmd, pre, lo_ip, g_ctx.dns_port));
+        CHECK(run_cmd("%s -w -t mangle -A %s -p tcp --dport 53 -j TPROXY --on-ip %s --on-port %d", ipt_cmd, pre, lo_ip, g_ctx.dns_port));
+        CHECK(run_cmd("%s -w -t mangle -A %s -p udp ! --dport 53 -j TPROXY --on-ip %s --on-port %d", ipt_cmd, pre, lo_ip, g_ctx.port));
+        CHECK(run_cmd("%s -w -t mangle -A %s -p tcp ! --dport 53 -j TPROXY --on-ip %s --on-port %d", ipt_cmd, pre, lo_ip, g_ctx.port));
+    } else {
+        CHECK(run_cmd("%s -w -t mangle -A %s -p udp -j TPROXY --on-ip %s --on-port %d", ipt_cmd, pre, lo_ip, g_ctx.port));
+        CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -j TPROXY --on-ip %s --on-port %d", ipt_cmd, pre, lo_ip, g_ctx.port));
+    }
+
+    CHECK(init_chain("mangle", out, "OUTPUT", ipt_cmd, cg_match));
+    CHECK(apply_bypass_rules(out, "mangle", ipt_cmd));
+
+    if (g_ctx.has_override_dns) {
+        CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", ipt_cmd, out));
+        CHECK(run_cmd("%s -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", ipt_cmd, out));
+    } else {
+        CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -o lo -j RETURN", ipt_cmd, out));
+        CHECK(run_cmd("%s -w -t mangle -A %s -p udp -o lo -j RETURN", ipt_cmd, out));
+    }
+
+    CHECK(run_cmd("%s -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", ipt_cmd, out, g_ctx.tproxy_mark));
+    CHECK(run_cmd("%s -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", ipt_cmd, out, g_ctx.tproxy_mark));
+
+    return 0;
+}
+
+static int apply_dns_override_for_family(int family, pid_t pid, const char *cg_match) {
+    bool is_ipv6 = (family == AF_INET6);
+    const char *ipt_cmd = is_ipv6 ? "ip6tables" : "iptables";
+
+    if (is_ipv6 && !is_valid_ipv6(g_ctx.override_dns)) return 0;
+    if (!is_ipv6 && !is_valid_ipv4(g_ctx.override_dns)) return 0;
+
+    char dns_chain[128];
+    get_chain_name(dns_chain, sizeof(dns_chain), "TP_DNS", pid, is_ipv6);
+    CHECK(init_chain("nat", dns_chain, "OUTPUT", ipt_cmd, cg_match));
+    CHECK(apply_bypass_rules(dns_chain, "nat", ipt_cmd));
+    CHECK(run_cmd("%s -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", ipt_cmd, dns_chain));
+    CHECK(run_cmd("%s -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", ipt_cmd, dns_chain));
+    CHECK(run_cmd("%s -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", ipt_cmd, dns_chain, g_ctx.override_dns));
+    CHECK(run_cmd("%s -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", ipt_cmd, dns_chain, g_ctx.override_dns));
+
+    return 0;
+}
+
 static int setup_tproxy(pid_t pid, const char *cg_match, const char *mark_match) {
     g_ctx.tproxy_mark = pid + 10000;
-    char pre4[128], out4[128], pre6[128], out6[128];
-    get_chain_name(pre4, sizeof(pre4), "TP_PRE", pid, false);
-    get_chain_name(out4, sizeof(out4), "TP_OUT", pid, false);
 
-    CHECK(setup_tproxy_routing(g_ctx.tproxy_mark, AF_INET));
-
-    CHECK(init_chain("mangle", pre4, "PREROUTING", "iptables", mark_match));
-    CHECK(apply_bypass_rules(pre4, "mangle", "iptables"));
-    if (g_ctx.dns_port != g_ctx.port) {
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.dns_port));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.dns_port));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp ! --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp ! --dport 53 -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
-    } else {
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
-        CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j TPROXY --on-ip 127.0.0.1 --on-port %d", pre4, g_ctx.port));
-    }
-
-    CHECK(init_chain("mangle", out4, "OUTPUT", "iptables", cg_match));
-    CHECK(apply_bypass_rules(out4, "mangle", "iptables"));
-    CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", out4));
-    CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", out4));
-    CHECK(run_cmd("iptables -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", out4, g_ctx.tproxy_mark));
-    CHECK(run_cmd("iptables -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", out4, g_ctx.tproxy_mark));
-
+    CHECK(apply_tproxy_rules_for_family(AF_INET, pid, cg_match, mark_match));
     if (has_ip6tables()) {
-        get_chain_name(pre6, sizeof(pre6), "TP_PRE", pid, true);
-        get_chain_name(out6, sizeof(out6), "TP_OUT", pid, true);
-        CHECK(setup_tproxy_routing(g_ctx.tproxy_mark, AF_INET6));
-
-        CHECK(init_chain("mangle", pre6, "PREROUTING", "ip6tables", mark_match));
-        CHECK(apply_bypass_rules(pre6, "mangle", "ip6tables"));
-        if (g_ctx.dns_port != g_ctx.port) {
-            CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.dns_port));
-            CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.dns_port));
-            CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp ! --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
-            CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp ! --dport 53 -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
-        } else {
-            CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
-            CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j TPROXY --on-ip ::1 --on-port %d", pre6, g_ctx.port));
-        }
-
-        CHECK(init_chain("mangle", out6, "OUTPUT", "ip6tables", cg_match));
-        CHECK(apply_bypass_rules(out6, "mangle", "ip6tables"));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -o lo ! --dport 53 -j RETURN", out6));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -o lo ! --dport 53 -j RETURN", out6));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p tcp -j MARK --set-mark 0x%x", out6, g_ctx.tproxy_mark));
-        CHECK(run_cmd("ip6tables -w -t mangle -A %s -p udp -j MARK --set-mark 0x%x", out6, g_ctx.tproxy_mark));
+        CHECK(apply_tproxy_rules_for_family(AF_INET6, pid, cg_match, mark_match));
     }
 
-    if (g_ctx.override_dns[0] != '\0') {
-        g_ctx.has_override_dns = 1;
-        char dns4[128], dns6[128];
-
-        if (is_valid_ipv4(g_ctx.override_dns)) {
-            get_chain_name(dns4, sizeof(dns4), "TP_DNS", pid, false);
-            CHECK(init_chain("nat", dns4, "OUTPUT", "iptables", cg_match));
-            CHECK(apply_bypass_rules(dns4, "nat", "iptables"));
-            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", dns4));
-            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", dns4));
-            CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns4, g_ctx.override_dns));
-            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns4, g_ctx.override_dns));
-        } else if (is_valid_ipv6(g_ctx.override_dns) && has_ip6tables()) {
-            get_chain_name(dns6, sizeof(dns6), "TP_DNS", pid, true);
-            CHECK(init_chain("nat", dns6, "OUTPUT", "ip6tables", cg_match));
-            CHECK(apply_bypass_rules(dns6, "nat", "ip6tables"));
-            CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", dns6));
-            CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", dns6));
-            CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp --dport 53 -j DNAT --to-destination %s", dns6, g_ctx.override_dns));
-            CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp --dport 53 -j DNAT --to-destination %s", dns6, g_ctx.override_dns));
+    if (g_ctx.has_override_dns) {
+        CHECK(apply_dns_override_for_family(AF_INET, pid, cg_match));
+        if (has_ip6tables()) {
+            CHECK(apply_dns_override_for_family(AF_INET6, pid, cg_match));
         }
     }
     return 0;

@@ -91,6 +91,15 @@ int main(int argc, char *argv[]) {
     }
 
     bool is_attaching = (g_ctx.target_pid > 0);
+    if (is_attaching) {
+        log_warn("You are attaching to an existing process (PID: %d).", g_ctx.target_pid);
+        log_warn("Due to Linux kernel limitations, already established connections and listening sockets WILL NOT be proxied.");
+        log_warn("Only NEW connections created after this point will be routed through the proxy.");
+    }
+
+    if (!g_ctx.has_override_dns && (g_ctx.mode == MODE_TPROXY || g_ctx.redirect_dns)) {
+        log_warn("No --override-dns provided. DNS queries to local stub resolvers (e.g., 127.0.0.53) will bypass the proxy and LEAK.");
+    }
     int pipefd[2] = {-1, -1};
     pid_t child_pid = 0;
 

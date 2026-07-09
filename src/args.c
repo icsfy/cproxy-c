@@ -67,6 +67,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
             case 'o':
                 if (is_valid_ipv4(optarg) || is_valid_ipv6(optarg)) {
                     snprintf(ctx->override_dns, sizeof(ctx->override_dns), "%s", optarg);
+                    ctx->has_override_dns = true;
                 } else {
                     fprintf(stderr, "Error: Invalid IP address for --override-dns\n");
                     return -1;
