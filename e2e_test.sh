@@ -61,6 +61,8 @@ run_test() {
     local dns_flag=""
     if [[ "$mode" == "redirect" ]]; then
         dns_flag="--redirect-dns"
+    elif [[ "$mode" == "tproxy" ]]; then
+        dns_flag="--override-dns 1.1.1.1"
     fi
 
     # Our DNS mock resolves everything to 1.2.3.4 (or mapped v6), then TCP redirection kicks in
