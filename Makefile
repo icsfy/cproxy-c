@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Werror -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Iinclude -fPIE
+CFLAGS = -Wall -Wextra -Werror -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_GNU_SOURCE -Iinclude -fPIE
 LDFLAGS = -Wl,-z,relro,-z,now -pie
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
@@ -16,7 +16,7 @@ debug: clean all
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
 
-%.o: %.c
+%.o: %.c include/cproxy.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: $(TARGET)

@@ -15,6 +15,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         -Wall -Wextra -Werror -O2
         -fstack-protector-strong
         -D_FORTIFY_SOURCE=2
+        -D_GNU_SOURCE
         -fPIE
     )
     add_link_options(

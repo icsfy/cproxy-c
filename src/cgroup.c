@@ -30,6 +30,44 @@ static int add_pid_to_cgroup(pid_t pid, const char *path) {
     return 0;
 }
 
+static void move_pids_to_parent(const char *cgroup_path, const char *parent_path) {
+    char path[PATH_MAX + 64];
+    snprintf(path, sizeof(path), "%s/cgroup.procs", cgroup_path);
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        snprintf(path, sizeof(path), "%s/tasks", cgroup_path);
+        f = fopen(path, "r");
+    }
+
+    if (f) {
+        pid_t *pids = NULL;
+        int count = 0;
+        int capacity = 0;
+        char buf[32];
+        while (fgets(buf, sizeof(buf), f)) {
+            pid_t pid = (pid_t)strtol(buf, NULL, 10);
+            if (pid > 0) {
+                if (count >= capacity) {
+                    capacity = capacity == 0 ? 16 : capacity * 2;
+                    pid_t *temp = realloc(pids, capacity * sizeof(pid_t));
+                    if (!temp) {
+                        perror("realloc failed");
+                        break;
+                    }
+                    pids = temp;
+                }
+                pids[count++] = pid;
+            }
+        }
+        fclose(f);
+
+        for (int i = 0; i < count; i++) {
+            add_pid_to_cgroup(pids[i], parent_path);
+        }
+        free(pids);
+    }
+}
+
 static void get_current_cgroup_path(char *buf, size_t len) {
     buf[0] = '\0';
     FILE *f = fopen("/proc/self/cgroup", "r");
@@ -143,41 +181,7 @@ void cleanup_cgroup(void) {
     if (last_slash) {
         *last_slash = '\0';
 
-        char path[PATH_MAX + 64];
-        snprintf(path, sizeof(path), "%s/cgroup.procs", g_ctx.cgroup_path);
-        FILE *f = fopen(path, "r");
-        if (!f) {
-            snprintf(path, sizeof(path), "%s/tasks", g_ctx.cgroup_path);
-            f = fopen(path, "r");
-        }
-
-        if (f) {
-            pid_t *pids = NULL;
-            int count = 0;
-            int capacity = 0;
-            char buf[32];
-            while (fgets(buf, sizeof(buf), f)) {
-                pid_t pid = (pid_t)strtol(buf, NULL, 10);
-                if (pid > 0) {
-                    if (count >= capacity) {
-                        capacity = capacity == 0 ? 16 : capacity * 2;
-                        pid_t *temp = realloc(pids, capacity * sizeof(pid_t));
-                        if (!temp) {
-                            perror("realloc failed");
-                            break;
-                        }
-                        pids = temp;
-                    }
-                    pids[count++] = pid;
-                }
-            }
-            fclose(f);
-
-            for (int i = 0; i < count; i++) {
-                add_pid_to_cgroup(pids[i], parent_path);
-            }
-            free(pids);
-        }
+        move_pids_to_parent(g_ctx.cgroup_path, parent_path);
     }
 
     if (rmdir(g_ctx.cgroup_path) != 0 && errno != ENOENT) {
@@ -221,41 +225,7 @@ static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {
                 char parent_path[PATH_MAX];
                 snprintf(parent_path, sizeof(parent_path), "%s", base_path);
 
-                char procs_path[PATH_MAX + 64];
-                snprintf(procs_path, sizeof(procs_path), "%s/cgroup.procs", path);
-                FILE *f = fopen(procs_path, "r");
-                if (!f) {
-                    snprintf(procs_path, sizeof(procs_path), "%s/tasks", path);
-                    f = fopen(procs_path, "r");
-                }
-
-                if (f) {
-                    pid_t *pids = NULL;
-                    int count = 0;
-                    int capacity = 0;
-                    char buf[32];
-                    while (fgets(buf, sizeof(buf), f)) {
-                        pid_t pid_val = (pid_t)strtol(buf, NULL, 10);
-                        if (pid_val > 0) {
-                            if (count >= capacity) {
-                                capacity = capacity == 0 ? 16 : capacity * 2;
-                                pid_t *temp = realloc(pids, capacity * sizeof(pid_t));
-                                if (!temp) {
-                                    perror("realloc failed");
-                                    break;
-                                }
-                                pids = temp;
-                            }
-                            pids[count++] = pid_val;
-                        }
-                    }
-                    fclose(f);
-
-                    for (int i = 0; i < count; i++) {
-                        add_pid_to_cgroup(pids[i], parent_path);
-                    }
-                    free(pids);
-                }
+                move_pids_to_parent(path, parent_path);
 
                 if (rmdir(path) == 0) {
                     log_info("Removed stale cgroup: %s", path);

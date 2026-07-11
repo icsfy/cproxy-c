@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #ifndef CPROXY_H
 #define CPROXY_H
 #include <stdio.h>

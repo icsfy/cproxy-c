@@ -177,8 +177,16 @@ FILE *safe_popen(const char *cmd, pid_t *pid_out) {
         _exit(127);
     }
     close(fd[1]);
+    FILE *f = fdopen(fd[0], "r");
+    if (!f) {
+        close(fd[0]);
+        int status;
+        while (waitpid(pid, &status, 0) == -1 && errno == EINTR);
+        *pid_out = -1;
+        return NULL;
+    }
     *pid_out = pid;
-    return fdopen(fd[0], "r");
+    return f;
 }
 
 void safe_pclose(FILE *fp, pid_t pid) {
