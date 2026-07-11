@@ -9,7 +9,7 @@ static void get_chain_name(char *buf, size_t len, const char *prefix, pid_t pid,
 static int has_ip6tables(void) {
     static int cache = -1;
     if (cache == -1) {
-        cache = (run_cmd_silent("command -v ip6tables") == 0);
+        cache = is_command_available("ip6tables");
     }
     return cache;
 }
@@ -42,7 +42,7 @@ int init_chain(const char *table, const char *chain, const char *parent, const c
     run_cmd_silent("%s -w -t %s -X %s", iptables_cmd, table, chain);
 
     CHECK(run_cmd("%s -w -t %s -N %s", iptables_cmd, table, chain));
-    CHECK(run_cmd("%s -w -t %s -A %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain));
+    CHECK(run_cmd("%s -w -t %s -I %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain));
     return 0;
 }
 
@@ -71,9 +71,9 @@ static void get_cgroup_match(char *buf, size_t len, pid_t pid) {
         if (p) {
             p += strlen("/sys/fs/cgroup");
             if (*p == '\0') p = "/";
-            snprintf(buf, len, "-m cgroup --path %s", p);
+            snprintf(buf, len, "-m cgroup --path '%s'", p);
         } else {
-            snprintf(buf, len, "-m cgroup --path /cproxy-%d", pid);
+            snprintf(buf, len, "-m cgroup --path '/cproxy-%d'", pid);
         }
     } else {
         unsigned int classid = (((unsigned int)(pid >> 16) + 1) << 16) | (pid & 0xFFFF);

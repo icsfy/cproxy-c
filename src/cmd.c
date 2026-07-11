@@ -1,5 +1,51 @@
 #include "cproxy.h"
 
+static void exec_cmd(char *cmd_buf) {
+    char *argv_cmd[128];
+    int argc_cmd = 0;
+    char *p = cmd_buf;
+    while (*p && argc_cmd < 127) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+
+        if (*p == '\'') {
+            p++;
+            argv_cmd[argc_cmd++] = p;
+            while (*p && *p != '\'') p++;
+            if (*p == '\'') {
+                *p = '\0';
+                p++;
+            }
+        } else if (*p == '"') {
+            p++;
+            argv_cmd[argc_cmd++] = p;
+            while (*p && *p != '"') p++;
+            if (*p == '"') {
+                *p = '\0';
+                p++;
+            }
+        } else {
+            argv_cmd[argc_cmd++] = p;
+            while (*p && *p != ' ' && *p != '\'' && *p != '"') p++;
+            if (*p == ' ' || *p == '\'' || *p == '"') {
+                char next = *p;
+                *p = '\0';
+                p++;
+                if (next != ' ') {
+                    // This handles cases where quotes are attached to words,
+                    // but in cproxy we separate arguments by spaces.
+                }
+            }
+        }
+    }
+    argv_cmd[argc_cmd] = NULL;
+
+    if (argc_cmd > 0) {
+        execvp(argv_cmd[0], argv_cmd);
+    }
+    _exit(127);
+}
+
 int run_cmd_v(const char *fmt, va_list args, int silent) {
     char cmd_buf[4096];
     int n = vsnprintf(cmd_buf, sizeof(cmd_buf), fmt, args);
@@ -43,7 +89,7 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
                 close(devnull);
             }
         }
-        execl("/bin/sh", "sh", "-c", cmd_buf, (char *)NULL);
+        exec_cmd(cmd_buf);
         _exit(127);
     } else if (pid > 0) {
         int status;
@@ -125,7 +171,9 @@ FILE *safe_popen(const char *cmd, pid_t *pid_out) {
         clearenv();
         setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
 
-        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        char cmd_buf[1024];
+        snprintf(cmd_buf, sizeof(cmd_buf), "%s", cmd);
+        exec_cmd(cmd_buf);
         _exit(127);
     }
     close(fd[1]);

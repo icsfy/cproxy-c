@@ -25,7 +25,7 @@ cproxy-c
 *.sw?
 
 # Test and Log files
-proxy.log
+*.log
 __pycache__/
 vgcore.*
 

@@ -147,16 +147,37 @@ int parse_bypass_rules(Context *ctx) {
     return 0;
 }
 
+int is_command_available(const char *cmd) {
+    char *path = getenv("PATH");
+    if (!path) path = "/usr/sbin:/usr/bin:/sbin:/bin";
+    char *path_copy = strdup(path);
+    if (!path_copy) return 0;
+
+    char *saveptr;
+    char *dir = strtok_r(path_copy, ":", &saveptr);
+    char full_path[PATH_MAX];
+    while (dir) {
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir, cmd);
+        if (access(full_path, X_OK) == 0) {
+            free(path_copy);
+            return 1;
+        }
+        dir = strtok_r(NULL, ":", &saveptr);
+    }
+    free(path_copy);
+    return 0;
+}
+
 int check_dependencies(void) {
     const char *deps[] = {"iptables", "ip"};
     for (size_t i = 0; i < sizeof(deps) / sizeof(deps[0]); i++) {
-        if (run_cmd_silent("command -v %s", deps[i]) != 0) {
+        if (!is_command_available(deps[i])) {
             log_error("'%s' command not found. Please install it.", deps[i]);
             return -1;
         }
     }
 
-    if (run_cmd_silent("command -v ip6tables") != 0) {
+    if (!is_command_available("ip6tables")) {
         log_warn("'ip6tables' not found. IPv6 support will be disabled.");
     }
 

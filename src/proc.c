@@ -88,7 +88,7 @@ int wait_for_process(pid_t pid) {
         log_debug("Using pidfd to monitor PID %d", pid);
         struct pollfd pfd = { .fd = pidfd, .events = POLLIN };
         while (g_keep_running) {
-            int ret = poll(&pfd, 1, 100);
+            int ret = poll(&pfd, 1, -1);
             if (ret > 0) {
                 close(pidfd);
                 return 0; // Exited

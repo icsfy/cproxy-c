@@ -143,6 +143,28 @@ EOF
     wait $SERVER_PID 2>/dev/null
     rm -f test_server.py
 
+    # 6. Proxy Chaining (Nested cproxy) Test
+    log_info "Testing proxy chaining (nested cproxy)..."
+    INNER_PORT=$((PROXY_PORT + 2000))
+    # Start an inner proxy server
+    setsid sudo python3 -u test_proxy.py "$mode" $INNER_PORT >> proxy_inner.log 2>&1 &
+    INNER_PROXY_PID=$!
+    wait_for_port $INNER_PORT || { log_error "Inner proxy failed to start"; exit 1; }
+
+    # Run nested: curl -> inner_cproxy -> outer_cproxy. The inner rule should intercept first.
+    OUTPUT=$(sudo ./cproxy --mode "$mode" --port $PROXY_PORT -- sudo ./cproxy --mode "$mode" --port $INNER_PORT -- curl -s -m 5 $TEST_URL)
+
+    if [[ "$OUTPUT" == *"cproxy works!"* ]]; then
+        log_info "PASS: $mode mode proxy chaining works"
+    else
+        log_error "FAIL: $mode mode proxy chaining failed"
+        echo "Output: $OUTPUT"
+        exit 1
+    fi
+
+    sudo kill $INNER_PROXY_PID 2>/dev/null
+    wait $INNER_PROXY_PID 2>/dev/null
+
     # Kill proxy for next test
     sudo kill $PROXY_PID 2>/dev/null
     wait $PROXY_PID 2>/dev/null

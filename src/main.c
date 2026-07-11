@@ -70,14 +70,25 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    bool is_attaching = (g_ctx.target_pid > 0);
+
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_handler;
     sa.sa_flags = 0; // Disable SA_RESTART so waitpid can be interrupted by signals
-    sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
+
+    sigset_t mask, oldmask;
+    if (is_attaching) {
+        sigaction(SIGINT, &sa, NULL);
+        sigaction(SIGQUIT, &sa, NULL);
+    } else {
+        sigemptyset(&mask);
+        sigaddset(&mask, SIGINT);
+        sigaddset(&mask, SIGQUIT);
+        sigprocmask(SIG_BLOCK, &mask, &oldmask);
+    }
 
     if (g_ctx.verbose) {
         const char *mode_str = (g_ctx.mode == MODE_REDIRECT) ? "redirect" : (g_ctx.mode == MODE_TPROXY ? "tproxy" : "trace");
@@ -90,7 +101,6 @@ int main(int argc, char *argv[]) {
             log_info("Override DNS: %s", g_ctx.override_dns);
     }
 
-    bool is_attaching = (g_ctx.target_pid > 0);
     if (is_attaching) {
         log_warn("You are attaching to an existing process (PID: %d).", g_ctx.target_pid);
         log_warn("Due to Linux kernel limitations, already established connections and listening sockets WILL NOT be proxied.");
@@ -114,6 +124,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         if (child_pid == 0) {
+            sigprocmask(SIG_SETMASK, &oldmask, NULL);
             close(pipefd[1]);
             char sync_buf;
             ssize_t nread;
@@ -131,6 +142,13 @@ int main(int argc, char *argv[]) {
             perror("execvp failed");
             _exit(1);
         }
+        struct sigaction sa_ign;
+        memset(&sa_ign, 0, sizeof(sa_ign));
+        sa_ign.sa_handler = SIG_IGN;
+        sigaction(SIGINT, &sa_ign, NULL);
+        sigaction(SIGQUIT, &sa_ign, NULL);
+        sigprocmask(SIG_SETMASK, &oldmask, NULL);
+
         close(pipefd[0]);
     }
 
