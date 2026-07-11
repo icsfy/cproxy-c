@@ -27,6 +27,11 @@ wait_for_port() {
 cleanup_test() {
     log_info "Cleaning up..."
     [ -n "$PROXY_PID" ] && sudo kill $PROXY_PID 2>/dev/null
+    [ -n "$SERVER_PID" ] && sudo kill $SERVER_PID 2>/dev/null
+    [ -n "$INNER_PROXY_PID" ] && sudo kill $INNER_PROXY_PID 2>/dev/null
+    sudo pkill -f test_proxy.py 2>/dev/null
+    sudo pkill -f test_server.py 2>/dev/null
+    sudo pkill -f "cproxy --mode" 2>/dev/null
     sudo ./cproxy --clean > /dev/null 2>&1
 }
 
