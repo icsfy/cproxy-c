@@ -9,7 +9,7 @@ static void get_chain_name(char *buf, size_t len, const char *prefix, pid_t pid,
 static int has_ip6tables(void) {
     static int cache = -1;
     if (cache == -1) {
-        cache = is_command_available("ip6tables");
+        cache = (run_cmd_silent("ip6tables --version") == 0);
     }
     return cache;
 }
