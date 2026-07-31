@@ -159,6 +159,11 @@ int main(int argc, char *argv[]) {
             char env_str[64];
             snprintf(env_str, sizeof(env_str), "cproxy/%d", g_ctx.port);
             setenv("CPROXY_ENV", env_str, 1);
+            
+            for (int i = 0; i < g_ctx.env_count; i++) {
+                putenv(g_ctx.env_vars[i]);
+            }
+            
             execvp(argv[optind], &argv[optind]);
             perror("execvp failed");
             _exit(1);

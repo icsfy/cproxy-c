@@ -23,7 +23,15 @@ void drop_privileges(void) {
     gid_t target_gid = 0;
     struct passwd *pw = NULL;
 
-    if (sudo_user && sudo_uid_str && sudo_gid_str) {
+    if (g_ctx.run_as_user[0] != '\0') {
+        pw = getpwnam(g_ctx.run_as_user);
+        if (!pw) {
+            fprintf(stderr, "Error: User '%s' not found.\n", g_ctx.run_as_user);
+            _exit(1);
+        }
+        target_uid = pw->pw_uid;
+        target_gid = pw->pw_gid;
+    } else if (sudo_user && sudo_uid_str && sudo_gid_str) {
         target_uid = (uid_t)strtol(sudo_uid_str, NULL, 10);
         target_gid = (gid_t)strtol(sudo_gid_str, NULL, 10);
         pw = getpwuid(target_uid);

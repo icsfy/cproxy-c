@@ -34,12 +34,12 @@ else
     exit 1
 fi
 
-# 4. Parsing test with --hosts and --resolvconf
-sudo ./cproxy --dry-run --mode redirect --port 1080 --hosts /dev/null --resolvconf /dev/null -- ls > /dev/null
+# 4. Parsing test with --hosts, --resolvconf, --user, and --env
+sudo ./cproxy --dry-run --mode redirect --port 1080 --hosts /dev/null --resolvconf /dev/null -u nobody -e TEST=1 -- ls > /dev/null
 if [ $? -eq 0 ]; then
-    echo "[PASS] --hosts and --resolvconf works"
+    echo "[PASS] Extra feature flags work"
 else
-    echo "[FAIL] --hosts and --resolvconf failed"
+    echo "[FAIL] Extra feature flags failed"
     exit 1
 fi
 

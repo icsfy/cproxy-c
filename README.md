@@ -23,6 +23,7 @@ Traditional tools like `proxychains` rely on `LD_PRELOAD` to hook socket functio
 * **Trace Mode:** Audits and logs application network activity in real time using the `iptables LOG` target.
 * **Process Attaching:** Dynamically intercepts traffic of an already running process via `--pid`.
 * **Bypass /etc/hosts & /etc/resolv.conf:** Bind mount custom files (or `/dev/null`) to strictly force/bypass DNS resolution via `--hosts <file>` and `--resolvconf <file>`.
+* **Daemonization / Identity:** Strictly enforce privilege dropping to a specific user (`--user <username>`) and safely inject isolated environment variables (`--env KEY=VALUE`).
 * **Bypass Rules:** Bypass specific IP ranges (e.g., LAN) to prevent routing loops.
 * **Garbage Collection:** Auto-cleans orphaned cgroups and stale iptables rules (`--clean`).
 
@@ -96,13 +97,28 @@ sudo ./cproxy --clean
 
 ---
 
-## Environment Preservation (`sudo -E`)
+## Environment Preservation (`sudo -E`) & Customization
 
 Because `cproxy` requires `sudo`, user environment paths are often stripped. `cproxy` automatically restores `HOME`, `USER`, `LOGNAME`, and `XDG_RUNTIME_DIR`.
 
 However, if your command relies on complex paths (like `nvm` node paths), you should use `sudo -E`:
 ```bash
 sudo -E ./cproxy --mode redirect --port 1080 -- node script.js
+```
+
+If you want to inject a specific environment variable cleanly without using `sudo -E` (which leaks everything), use `--env`:
+```bash
+sudo ./cproxy --mode tproxy --env ALL_PROXY=socks5://127.0.0.1:1080 -- curl http://api.ipify.org
+```
+
+---
+
+## Daemonization & Background Services
+
+When running `cproxy-c` from a Systemd service or an init script where `sudo` isn't used interactively, `cproxy-c` might run the target application as `root`. To strictly enforce that the application runs as an unprivileged user, use `--user`:
+
+```bash
+sudo ./cproxy --mode tproxy --user nobody --port 1080 -- /usr/bin/my_daemon
 ```
 
 ---

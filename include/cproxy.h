@@ -51,6 +51,9 @@ typedef struct {
     bool has_custom_hosts;
     char custom_resolvconf[PATH_MAX];
     bool has_custom_resolvconf;
+    char run_as_user[64];
+    char *env_vars[16];
+    int env_count;
 } Context;
 
 extern Context g_ctx;

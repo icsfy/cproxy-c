@@ -15,6 +15,8 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"clean", no_argument, 0, 'C'},
         {"hosts", required_argument, 0, 'H'},
         {"resolvconf", required_argument, 0, 'R'},
+        {"user", required_argument, 0, 'u'},
+        {"env", required_argument, 0, 'e'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
@@ -22,7 +24,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:VDChv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:u:e:VDChv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
@@ -37,6 +39,8 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
                 fprintf(stderr, "  -H, --hosts <file>        Bind mount a custom file over /etc/hosts\n");
                 fprintf(stderr, "  -R, --resolvconf <file>   Bind mount a custom file over /etc/resolv.conf\n");
+                fprintf(stderr, "  -u, --user <username>     Run target process as a specific user\n");
+                fprintf(stderr, "  -e, --env <KEY=VALUE>     Inject an environment variable into the process\n");
                 fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
                 fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
                 fprintf(stderr, "  -C, --clean               Cleanup stale iptables rules and cgroups\n");
@@ -81,6 +85,17 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                     return -1;
                 }
                 ctx->has_custom_resolvconf = true;
+                break;
+            case 'u':
+                snprintf(ctx->run_as_user, sizeof(ctx->run_as_user), "%s", optarg);
+                break;
+            case 'e':
+                if (ctx->env_count < 16) {
+                    ctx->env_vars[ctx->env_count++] = strdup(optarg);
+                } else {
+                    fprintf(stderr, "Error: Too many --env arguments (max 16)\n");
+                    return -1;
+                }
                 break;
             case 'o':
                 if (is_valid_ipv4(optarg) || is_valid_ipv6(optarg)) {
