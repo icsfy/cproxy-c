@@ -123,6 +123,24 @@ sudo ./cproxy --mode tproxy --user nobody --port 1080 -- /usr/bin/my_daemon
 
 ---
 
+## SetUID Mode (Rootless Usage)
+
+Instead of running `cproxy-c` via `sudo` (which strips environment variables and shell aliases), you can configure the binary with the `setuid` bit. This allows unprivileged users to execute it while it natively elevates to configure `iptables`, and then safely drops back to the exact unprivileged user to execute your application.
+
+**Setup:**
+```bash
+sudo chown root:root cproxy
+sudo chmod u+s cproxy
+```
+
+**Usage:**
+Now you can use `cproxy-c` transparently without `sudo`. Your original environment (like `PATH`, shell functions, and `NODE_ENV`) remains completely untouched:
+```bash
+./cproxy --mode tproxy --port 1080 -- curl http://api.ipify.org
+```
+
+---
+
 ## Architecture
 
 ```text
