@@ -1,4 +1,6 @@
 #include "cproxy.h"
+#include <sched.h>
+#include <sys/mount.h>
 
 // Global context
 Context g_ctx = {
@@ -132,6 +134,17 @@ int main(int argc, char *argv[]) {
             if (nread <= 0)
                 _exit(1);
             close(pipefd[0]);
+
+            if (g_ctx.has_custom_hosts) {
+                if (unshare(CLONE_NEWNS) == 0) {
+                    mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL);
+                    if (mount(g_ctx.custom_hosts, "/etc/hosts", NULL, MS_BIND, NULL) < 0) {
+                        perror("Failed to bind mount custom hosts file");
+                    }
+                } else {
+                    perror("unshare(CLONE_NEWNS) failed");
+                }
+            }
 
             drop_privileges();
 

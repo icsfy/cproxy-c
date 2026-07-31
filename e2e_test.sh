@@ -185,4 +185,20 @@ make clean && make
 run_test "redirect"
 run_test "tproxy"
 
+# Test --hosts mount namespace bypass
+log_info "Testing custom --hosts mount isolation..."
+cat << 'EOF' > custom_hosts.test
+127.0.2.2 my-dummy-domain.local
+EOF
+OUTPUT=$(sudo ./cproxy --mode trace --hosts custom_hosts.test -- curl -v -s -m 2 http://my-dummy-domain.local 2>&1)
+if echo "$OUTPUT" | grep -q "Trying 127.0.2.2"; then
+    log_info "PASS: --hosts custom file mounted and respected successfully"
+else
+    log_error "FAIL: --hosts custom file mount failed"
+    echo "Output: $OUTPUT"
+    rm -f custom_hosts.test
+    exit 1
+fi
+rm -f custom_hosts.test
+
 log_info "All end-to-end tests passed successfully!"

@@ -34,7 +34,15 @@ else
     exit 1
 fi
 
-# 4. Parsing test
+# 4. Parsing test with --hosts
+sudo ./cproxy --dry-run --mode redirect --port 1080 --hosts /dev/null -- ls > /dev/null
+if [ $? -eq 0 ]; then
+    echo "[PASS] --hosts works"
+else
+    echo "[FAIL] --hosts failed"
+    exit 1
+fi
+
 # We can't easily test real functionality without being root and potentially messing with system state,
 # but dry-run covers most of the logic.
 

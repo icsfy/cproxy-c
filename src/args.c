@@ -13,6 +13,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"verbose", no_argument, 0, 'V'},
         {"dry-run", no_argument, 0, 'D'},
         {"clean", no_argument, 0, 'C'},
+        {"hosts", required_argument, 0, 'H'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
@@ -20,7 +21,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:VDChv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:VDChv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
@@ -33,6 +34,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -o, --override-dns <ip>   Override DNS IP (DNAT/TProxy)\n");
                 fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
+                fprintf(stderr, "  -H, --hosts <file>        Bind mount a custom file over /etc/hosts\n");
                 fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
                 fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
                 fprintf(stderr, "  -C, --clean               Cleanup stale iptables rules and cgroups\n");
@@ -64,6 +66,13 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
             case 'V': ctx->verbose = true; break;
             case 'D': ctx->dry_run = true; break;
             case 'C': ctx->clean_stale = true; break;
+            case 'H':
+                if (realpath(optarg, ctx->custom_hosts) == NULL) {
+                    fprintf(stderr, "Error: Invalid or inaccessible hosts file: %s\n", optarg);
+                    return -1;
+                }
+                ctx->has_custom_hosts = true;
+                break;
             case 'o':
                 if (is_valid_ipv4(optarg) || is_valid_ipv6(optarg)) {
                     snprintf(ctx->override_dns, sizeof(ctx->override_dns), "%s", optarg);
@@ -123,6 +132,11 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     if (ctx->target_pid == 0 && optind >= argc) {
         fprintf(stderr, "Error: No command specified and no --pid provided.\n");
+        return -1;
+    }
+
+    if (ctx->has_custom_hosts && ctx->target_pid > 0) {
+        fprintf(stderr, "Error: --hosts cannot be used with --pid (already running processes).\n");
         return -1;
     }
 

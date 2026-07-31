@@ -47,6 +47,8 @@ typedef struct {
     bool has_override_dns;
     bool cgroup_created;
     bool clean_stale;
+    char custom_hosts[PATH_MAX];
+    bool has_custom_hosts;
 } Context;
 
 extern Context g_ctx;
