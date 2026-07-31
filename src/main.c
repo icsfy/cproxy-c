@@ -135,11 +135,19 @@ int main(int argc, char *argv[]) {
                 _exit(1);
             close(pipefd[0]);
 
-            if (g_ctx.has_custom_hosts) {
+            if (g_ctx.has_custom_hosts || g_ctx.has_custom_resolvconf) {
                 if (unshare(CLONE_NEWNS) == 0) {
                     mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL);
-                    if (mount(g_ctx.custom_hosts, "/etc/hosts", NULL, MS_BIND, NULL) < 0) {
-                        perror("Failed to bind mount custom hosts file");
+                    
+                    if (g_ctx.has_custom_hosts) {
+                        if (mount(g_ctx.custom_hosts, "/etc/hosts", NULL, MS_BIND, NULL) < 0) {
+                            perror("Failed to bind mount custom hosts file");
+                        }
+                    }
+                    if (g_ctx.has_custom_resolvconf) {
+                        if (mount(g_ctx.custom_resolvconf, "/etc/resolv.conf", NULL, MS_BIND, NULL) < 0) {
+                            perror("Failed to bind mount custom resolv.conf file");
+                        }
                     }
                 } else {
                     perror("unshare(CLONE_NEWNS) failed");

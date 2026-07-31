@@ -49,6 +49,8 @@ typedef struct {
     bool clean_stale;
     char custom_hosts[PATH_MAX];
     bool has_custom_hosts;
+    char custom_resolvconf[PATH_MAX];
+    bool has_custom_resolvconf;
 } Context;
 
 extern Context g_ctx;

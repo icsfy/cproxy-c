@@ -22,7 +22,7 @@ Traditional tools like `proxychains` rely on `LD_PRELOAD` to hook socket functio
 * **TProxy Mode (Bidirectional-Safe):** Transparently proxies TCP and UDP outbound traffic (IPv4/IPv6) with optional DNS override. Through flow-directional Conntrack marking, inbound connections to server applications running inside the cgroup are preserved and bypassed, allowing you to proxy server processes safely!
 * **Trace Mode:** Audits and logs application network activity in real time using the `iptables LOG` target.
 * **Process Attaching:** Dynamically intercepts traffic of an already running process via `--pid`.
-* **Bypass /etc/hosts:** Bind mount a custom `/etc/hosts` file (or `/dev/null` for an empty one) to force DNS resolution via `--hosts <file>`.
+* **Bypass /etc/hosts & /etc/resolv.conf:** Bind mount custom files (or `/dev/null`) to strictly force/bypass DNS resolution via `--hosts <file>` and `--resolvconf <file>`.
 * **Bypass Rules:** Bypass specific IP ranges (e.g., LAN) to prevent routing loops.
 * **Garbage Collection:** Auto-cleans orphaned cgroups and stale iptables rules (`--clean`).
 
@@ -80,10 +80,12 @@ sudo ./cproxy --mode tproxy --port 1080 --pid $(pidof dockerd)
 ```
 *(Warning: Existing established connections will not be proxied. Only new connections will be routed.)*
 
-### 6. Bypassing /etc/hosts
-You can isolate the proxied process in a mount namespace and provide a custom `/etc/hosts` file (or an empty one) to force it to use DNS and bypass local overrides:
+### 6. Strict DNS Isolation (Bypassing /etc/hosts & /etc/resolv.conf)
+You can isolate the proxied process in a mount namespace and provide a custom `/etc/hosts` or `/etc/resolv.conf`. This is the cleanest way to completely bypass the host's `systemd-resolved` and force standard DNS queries without relying on iptables DNAT:
 ```bash
-sudo ./cproxy --mode tproxy --port 1080 --override-dns 8.8.8.8 --hosts /dev/null -- curl http://local-domain
+# Force the application to natively query 8.8.8.8 instead of the host's 127.0.0.53
+echo "nameserver 8.8.8.8" > my_resolv.conf
+sudo ./cproxy --mode tproxy --port 1080 --resolvconf my_resolv.conf --hosts /dev/null -- curl http://local-domain
 ```
 
 ### 7. Cleaning up stale rules

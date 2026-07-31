@@ -14,6 +14,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"dry-run", no_argument, 0, 'D'},
         {"clean", no_argument, 0, 'C'},
         {"hosts", required_argument, 0, 'H'},
+        {"resolvconf", required_argument, 0, 'R'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
@@ -21,7 +22,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:VDChv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:VDChv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
@@ -35,6 +36,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
                 fprintf(stderr, "  -H, --hosts <file>        Bind mount a custom file over /etc/hosts\n");
+                fprintf(stderr, "  -R, --resolvconf <file>   Bind mount a custom file over /etc/resolv.conf\n");
                 fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
                 fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
                 fprintf(stderr, "  -C, --clean               Cleanup stale iptables rules and cgroups\n");
@@ -72,6 +74,13 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                     return -1;
                 }
                 ctx->has_custom_hosts = true;
+                break;
+            case 'R':
+                if (realpath(optarg, ctx->custom_resolvconf) == NULL) {
+                    fprintf(stderr, "Error: Invalid or inaccessible resolvconf file: %s\n", optarg);
+                    return -1;
+                }
+                ctx->has_custom_resolvconf = true;
                 break;
             case 'o':
                 if (is_valid_ipv4(optarg) || is_valid_ipv6(optarg)) {
@@ -135,8 +144,8 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         return -1;
     }
 
-    if (ctx->has_custom_hosts && ctx->target_pid > 0) {
-        fprintf(stderr, "Error: --hosts cannot be used with --pid (already running processes).\n");
+    if ((ctx->has_custom_hosts || ctx->has_custom_resolvconf) && ctx->target_pid > 0) {
+        fprintf(stderr, "Error: --hosts and --resolvconf cannot be used with --pid (already running processes).\n");
         return -1;
     }
 

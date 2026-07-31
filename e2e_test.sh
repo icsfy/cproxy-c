@@ -201,4 +201,21 @@ else
 fi
 rm -f custom_hosts.test
 
+# Test --resolvconf mount namespace bypass
+log_info "Testing custom --resolvconf mount isolation..."
+cat << 'EOF' > custom_resolv.test
+nameserver 127.0.2.3
+EOF
+# If resolv.conf is mounted correctly, cat /etc/resolv.conf should show our custom content
+OUTPUT=$(sudo ./cproxy --mode trace --resolvconf custom_resolv.test -- cat /etc/resolv.conf)
+if echo "$OUTPUT" | grep -q "nameserver 127.0.2.3"; then
+    log_info "PASS: --resolvconf custom file mounted and respected successfully"
+else
+    log_error "FAIL: --resolvconf custom file mount failed"
+    echo "Output: $OUTPUT"
+    rm -f custom_resolv.test
+    exit 1
+fi
+rm -f custom_resolv.test
+
 log_info "All end-to-end tests passed successfully!"
