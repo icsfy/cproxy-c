@@ -18,6 +18,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <sys/prctl.h>
 
 #define CPROXY_VERSION "1.2.2"
 

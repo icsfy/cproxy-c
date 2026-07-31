@@ -58,6 +58,41 @@ int main(int argc, char *argv[]) {
     if (parse_args(&g_ctx, argc, argv) != 0) return 1;
     if (parse_bypass_rules(&g_ctx) != 0) return 1;
 
+    int target_argc = argc - optind;
+    char **target_argv = NULL;
+    if (target_argc > 0) {
+        target_argv = malloc((target_argc + 1) * sizeof(char *));
+        for (int i = 0; i < target_argc; i++) {
+            target_argv[i] = strdup(argv[optind + i]);
+        }
+        target_argv[target_argc] = NULL;
+    }
+
+    size_t argv_len = 0;
+    for (int i = 0; i < argc; i++) {
+        argv_len += strlen(argv[i]) + 1;
+    }
+
+    if (target_argc > 0) {
+        char new_title[256];
+        snprintf(new_title, sizeof(new_title), "cproxy: %s", target_argv[0]);
+        prctl(PR_SET_NAME, "cproxy", 0, 0, 0);
+        
+        size_t new_len = strlen(new_title);
+        if (argv_len > 0) {
+            size_t copy_len = new_len < argv_len - 1 ? new_len : argv_len - 1;
+            memcpy(argv[0], new_title, copy_len);
+            argv[0][copy_len] = '\0';
+            
+            if (argv_len > copy_len + 1) {
+                memset(argv[0] + copy_len + 1, 0, argv_len - copy_len - 1);
+            }
+        }
+    } else {
+        prctl(PR_SET_NAME, "cproxy-attach", 0, 0, 0);
+    }
+
+
     if (!g_ctx.dry_run && geteuid() != 0) {
         log_error("cproxy must be run as root (use sudo)");
         return 1;
@@ -164,7 +199,7 @@ int main(int argc, char *argv[]) {
                 putenv(g_ctx.env_vars[i]);
             }
             
-            execvp(argv[optind], &argv[optind]);
+            execvp(target_argv[0], target_argv);
             perror("execvp failed");
             _exit(1);
         }
