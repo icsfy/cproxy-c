@@ -26,9 +26,9 @@ wait_for_port() {
 
 cleanup_test() {
     log_info "Cleaning up..."
-    [ -n "$PROXY_PID" ] && sudo kill $PROXY_PID 2>/dev/null
-    [ -n "$SERVER_PID" ] && sudo kill $SERVER_PID 2>/dev/null
-    [ -n "$INNER_PROXY_PID" ] && sudo kill $INNER_PROXY_PID 2>/dev/null
+    [ -n "$PROXY_PID" ] && sudo kill -- -$PROXY_PID 2>/dev/null
+    [ -n "$SERVER_PID" ] && sudo kill -- -$SERVER_PID 2>/dev/null
+    [ -n "$INNER_PROXY_PID" ] && sudo kill -- -$INNER_PROXY_PID 2>/dev/null
     sudo pkill -f test_proxy.py 2>/dev/null
     sudo pkill -f test_server.py 2>/dev/null
     sudo pkill -f "cproxy --mode" 2>/dev/null
@@ -129,10 +129,10 @@ while True:
         break
 EOF
     # Run the server under cproxy
-    sudo ./cproxy --mode "$mode" --port $PROXY_PORT -- python3 test_server.py $SERVER_PORT > /dev/null 2>&1 &
+    setsid sudo ./cproxy --mode "$mode" --port $PROXY_PORT -- python3 test_server.py $SERVER_PORT > /dev/null 2>&1 &
     SERVER_PID=$!
 
-    wait_for_port $SERVER_PORT || { log_error "Test server failed to start"; sudo kill $SERVER_PID 2>/dev/null; exit 1; }
+    wait_for_port $SERVER_PORT || { log_error "Test server failed to start"; sudo kill -- -$SERVER_PID 2>/dev/null; exit 1; }
 
     # Test from outside
     OUTPUT=$(curl -s -m 5 http://127.0.0.1:$SERVER_PORT)
@@ -140,11 +140,12 @@ EOF
     if [[ "$OUTPUT" == *"inbound works!"* ]]; then
         log_info "PASS: $mode mode allows inbound connections"
     else
-        log_error "FAIL: $mode mode inbound connections broken"
-        sudo kill $SERVER_PID 2>/dev/null
+        log_error "FAIL: $mode mode inbound connection failed"
+        echo "Output: $OUTPUT"
+        sudo kill -- -$SERVER_PID 2>/dev/null
         exit 1
     fi
-    sudo kill $SERVER_PID 2>/dev/null
+    sudo kill -- -$SERVER_PID 2>/dev/null
     wait $SERVER_PID 2>/dev/null
     rm -f test_server.py
 
@@ -167,11 +168,11 @@ EOF
         exit 1
     fi
 
-    sudo kill $INNER_PROXY_PID 2>/dev/null
+    sudo kill -- -$INNER_PROXY_PID 2>/dev/null
     wait $INNER_PROXY_PID 2>/dev/null
 
     # Kill proxy for next test
-    sudo kill $PROXY_PID 2>/dev/null
+    sudo kill -- -$PROXY_PID 2>/dev/null
     wait $PROXY_PID 2>/dev/null
     PROXY_PID=""
     sudo ./cproxy --clean > /dev/null 2>&1
