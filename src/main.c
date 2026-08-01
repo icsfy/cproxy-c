@@ -170,7 +170,7 @@ int main(int argc, char *argv[]) {
                 _exit(1);
             close(pipefd[0]);
 
-            if (g_ctx.has_custom_hosts || g_ctx.has_custom_resolvconf) {
+            if (g_ctx.has_custom_hosts || g_ctx.has_custom_resolvconf || g_ctx.mount_count > 0) {
                 if (unshare(CLONE_NEWNS) == 0) {
                     mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL);
                     
@@ -182,6 +182,12 @@ int main(int argc, char *argv[]) {
                     if (g_ctx.has_custom_resolvconf) {
                         if (mount(g_ctx.custom_resolvconf, "/etc/resolv.conf", NULL, MS_BIND, NULL) < 0) {
                             perror("Failed to bind mount custom resolv.conf file");
+                        }
+                    }
+                    for (int i = 0; i < g_ctx.mount_count; i++) {
+                        if (mount(g_ctx.mounts[i].src, g_ctx.mounts[i].dest, NULL, MS_BIND, NULL) < 0) {
+                            fprintf(stderr, "Failed to bind mount %s to %s: %s\n", 
+                                    g_ctx.mounts[i].src, g_ctx.mounts[i].dest, strerror(errno));
                         }
                     }
                 } else {

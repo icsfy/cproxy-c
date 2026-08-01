@@ -34,8 +34,8 @@ else
     exit 1
 fi
 
-# 4. Parsing test with --hosts, --resolvconf, --user, and --env
-sudo ./cproxy --dry-run --mode redirect --port 1080 --hosts /dev/null --resolvconf /dev/null -u nobody -e TEST=1 -- ls > /dev/null
+# 4. Parsing test with --hosts, --resolvconf, --user, --env, and --mount
+sudo ./cproxy --dry-run --mode redirect --port 1080 --hosts /dev/null --resolvconf /dev/null -u nobody -e TEST=1 -M /dev/null:/etc/machine-id -- ls > /dev/null
 if [ $? -eq 0 ]; then
     echo "[PASS] Extra feature flags work"
 else

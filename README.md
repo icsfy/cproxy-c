@@ -22,7 +22,7 @@ Traditional tools like `proxychains` rely on `LD_PRELOAD` to hook socket functio
 * **TProxy Mode (Bidirectional-Safe):** Transparently proxies TCP and UDP outbound traffic (IPv4/IPv6) with optional DNS override. Through flow-directional Conntrack marking, inbound connections to server applications running inside the cgroup are preserved and bypassed, allowing you to proxy server processes safely!
 * **Trace Mode:** Audits and logs application network activity in real time using the `iptables LOG` target.
 * **Process Attaching:** Dynamically intercepts traffic of an already running process via `--pid`.
-* **Bypass /etc/hosts & /etc/resolv.conf:** Bind mount custom files (or `/dev/null`) to strictly force/bypass DNS resolution via `--hosts <file>` and `--resolvconf <file>`.
+* **Namespace Isolation:** Bind mount custom files (`--hosts`, `--resolvconf`) or generic paths (`--mount src:dest`) to safely mock configs without altering the host.
 * **Daemonization / Identity:** Strictly enforce privilege dropping to a specific user (`--user <username>`) and safely inject isolated environment variables (`--env KEY=VALUE`).
 * **Bypass Rules:** Bypass specific IP ranges (e.g., LAN) to prevent routing loops.
 * **Garbage Collection:** Auto-cleans orphaned cgroups and stale iptables rules (`--clean`).
@@ -81,12 +81,15 @@ sudo ./cproxy --mode tproxy --port 1080 --pid $(pidof dockerd)
 ```
 *(Warning: Existing established connections will not be proxied. Only new connections will be routed.)*
 
-### 6. Strict DNS Isolation (Bypassing /etc/hosts & /etc/resolv.conf)
-You can isolate the proxied process in a mount namespace and provide a custom `/etc/hosts` or `/etc/resolv.conf`. This is the cleanest way to completely bypass the host's `systemd-resolved` and force standard DNS queries without relying on iptables DNAT:
+### 6. Namespace File Overrides & DNS Isolation
+You can isolate the proxied process in a mount namespace and override specific files seamlessly. This is particularly useful for DNS isolation or mocking configurations without root modifications to the host system.
 ```bash
-# Force the application to natively query 8.8.8.8 instead of the host's 127.0.0.53
+# Force the application to natively query 8.8.8.8 instead of the host's DNS
 echo "nameserver 8.8.8.8" > my_resolv.conf
-sudo ./cproxy --mode tproxy --port 1080 --resolvconf my_resolv.conf --hosts /dev/null -- curl http://local-domain
+sudo ./cproxy --mode tproxy --resolvconf my_resolv.conf --hosts /dev/null -- curl http://local-domain
+
+# Mock any generic file using the --mount flag (e.g., hiding machine-id)
+sudo ./cproxy --mode trace --mount /dev/null:/etc/machine-id -- cat /etc/machine-id
 ```
 
 ### 7. Cleaning up stale rules

@@ -219,4 +219,21 @@ else
 fi
 rm -f custom_resolv.test
 
+# Test --mount generic namespace bypass
+log_info "Testing generic --mount isolation..."
+cat << 'EOF' > dummy_config.test
+{ "mocked": true }
+EOF
+# We mount our dummy JSON over /etc/timezone just as a safe, generic target that exists on most systems
+OUTPUT=$(sudo ./cproxy --mode trace --mount dummy_config.test:/etc/timezone -- cat /etc/timezone)
+if echo "$OUTPUT" | grep -q "mocked"; then
+    log_info "PASS: --mount custom generic file mounted and respected successfully"
+else
+    log_error "FAIL: --mount custom generic file mount failed"
+    echo "Output: $OUTPUT"
+    rm -f dummy_config.test
+    exit 1
+fi
+rm -f dummy_config.test
+
 log_info "All end-to-end tests passed successfully!"

@@ -24,6 +24,14 @@
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
+#define MAX_BYPASS_RULES 64
+#define MAX_MOUNTS 16
+
+typedef struct {
+    char src[PATH_MAX];
+    char dest[PATH_MAX];
+} CustomMount;
+
 typedef struct {
     char addr[64];
     bool is_v6;
@@ -55,6 +63,8 @@ typedef struct {
     char run_as_user[64];
     char *env_vars[16];
     int env_count;
+    CustomMount mounts[MAX_MOUNTS];
+    int mount_count;
 } Context;
 
 extern Context g_ctx;

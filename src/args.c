@@ -15,6 +15,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"clean", no_argument, 0, 'C'},
         {"hosts", required_argument, 0, 'H'},
         {"resolvconf", required_argument, 0, 'R'},
+        {"mount", required_argument, 0, 'M'},
         {"user", required_argument, 0, 'u'},
         {"env", required_argument, 0, 'e'},
         {"help", no_argument, 0, 'h'},
@@ -24,7 +25,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:u:e:VDChv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:M:u:e:VDChv", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
@@ -39,6 +40,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
                 fprintf(stderr, "  -H, --hosts <file>        Bind mount a custom file over /etc/hosts\n");
                 fprintf(stderr, "  -R, --resolvconf <file>   Bind mount a custom file over /etc/resolv.conf\n");
+                fprintf(stderr, "  -M, --mount <src:dst>     Bind mount a generic file or directory\n");
                 fprintf(stderr, "  -u, --user <username>     Run target process as a specific user\n");
                 fprintf(stderr, "  -e, --env <KEY=VALUE>     Inject an environment variable into the process\n");
                 fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
@@ -86,6 +88,31 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 }
                 ctx->has_custom_resolvconf = true;
                 break;
+            case 'M': {
+                if (ctx->mount_count >= MAX_MOUNTS) {
+                    fprintf(stderr, "Error: Too many --mount arguments (max %d)\n", MAX_MOUNTS);
+                    return -1;
+                }
+                char *colon = strchr(optarg, ':');
+                if (!colon) {
+                    fprintf(stderr, "Error: Invalid mount format. Expected <src>:<dest>\n");
+                    return -1;
+                }
+                *colon = '\0';
+                char *src = optarg;
+                char *dest = colon + 1;
+                
+                if (realpath(src, ctx->mounts[ctx->mount_count].src) == NULL) {
+                    fprintf(stderr, "Error: Invalid or inaccessible mount source: %s\n", src);
+                    return -1;
+                }
+                if (realpath(dest, ctx->mounts[ctx->mount_count].dest) == NULL) {
+                    fprintf(stderr, "Error: Invalid or inaccessible mount destination: %s\n", dest);
+                    return -1;
+                }
+                ctx->mount_count++;
+                break;
+            }
             case 'u':
                 snprintf(ctx->run_as_user, sizeof(ctx->run_as_user), "%s", optarg);
                 break;
@@ -159,8 +186,8 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         return -1;
     }
 
-    if ((ctx->has_custom_hosts || ctx->has_custom_resolvconf) && ctx->target_pid > 0) {
-        fprintf(stderr, "Error: --hosts and --resolvconf cannot be used with --pid (already running processes).\n");
+    if ((ctx->has_custom_hosts || ctx->has_custom_resolvconf || ctx->mount_count > 0) && ctx->target_pid > 0) {
+        fprintf(stderr, "Error: --hosts, --resolvconf, and --mount cannot be used with --pid (already running processes).\n");
         return -1;
     }
 
