@@ -73,7 +73,7 @@ static void get_current_cgroup_path(char *buf, size_t len) {
     FILE *f = fopen("/proc/self/cgroup", "r");
     if (!f) return;
 
-    char line[512];
+    char line[4096];
     while (fgets(line, sizeof(line), f)) {
         // v2: 0::/path
         // v1: 1:net_cls:/path
@@ -111,7 +111,10 @@ int setup_cgroup(pid_t pid) {
         get_current_cgroup_path(rel_path, sizeof(rel_path));
     }
 
-    if (snprintf(g_ctx.cgroup_path, sizeof(g_ctx.cgroup_path), "%s%s/cproxy-%d", g_ctx.cg_base, rel_path, pid) >= (int)sizeof(g_ctx.cgroup_path)) {
+    const char *rp = rel_path;
+    if (rp[0] == '/' && rp[1] == '\0') rp = "";
+
+    if (snprintf(g_ctx.cgroup_path, sizeof(g_ctx.cgroup_path), "%s%s/cproxy-%d", g_ctx.cg_base, rp, pid) >= (int)sizeof(g_ctx.cgroup_path)) {
         log_error("Cgroup path too long");
         return -1;
     }

@@ -24,7 +24,6 @@
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
-#define MAX_BYPASS_RULES 64
 #define MAX_MOUNTS 16
 
 typedef struct {

@@ -24,6 +24,10 @@ void drop_privileges(void) {
     struct passwd *pw = NULL;
 
     if (g_ctx.run_as_user[0] != '\0') {
+        if (ruid != 0) {
+            fprintf(stderr, "FATAL: --user cannot be used when running cproxy as a setuid binary.\n");
+            _exit(1);
+        }
         pw = getpwnam(g_ctx.run_as_user);
         if (!pw) {
             fprintf(stderr, "Error: User '%s' not found.\n", g_ctx.run_as_user);
@@ -45,7 +49,7 @@ void drop_privileges(void) {
         }
     }
 
-    if (target_uid != 0) {
+    if (target_uid != 0 || pw != NULL) {
         if (pw) {
             if (initgroups(pw->pw_name, target_gid) != 0) {
                 perror("initgroups failed");

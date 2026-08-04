@@ -267,6 +267,11 @@ int main(int argc, char *argv[]) {
         int wait_timeout = 50; // 5s
         while (!is_cgroup_empty() && wait_timeout-- > 0) usleep(100000);
 
+        if (target_argv) {
+            for (int i = 0; i < target_argc; i++) free(target_argv[i]);
+            free(target_argv);
+        }
+
         return WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 0);
     }
 

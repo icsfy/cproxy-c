@@ -330,6 +330,21 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
         if (strncmp(line, "-N CP", 5) == 0) {
             char name[64];
             if (sscanf(line + 3, "%63s", name) == 1) {
+                bool is_cproxy_chain = (
+                    strncmp(name, "CP_RD_OUT_", 10) == 0 ||
+                    strncmp(name, "CP6_RD_OUT_", 11) == 0 ||
+                    strncmp(name, "CP_TP_PRE_", 10) == 0 ||
+                    strncmp(name, "CP6_TP_PRE_", 11) == 0 ||
+                    strncmp(name, "CP_TP_OUT_", 10) == 0 ||
+                    strncmp(name, "CP6_TP_OUT_", 11) == 0 ||
+                    strncmp(name, "CP_TP_DNS_", 10) == 0 ||
+                    strncmp(name, "CP6_TP_DNS_", 11) == 0 ||
+                    strncmp(name, "CP_TR_OUT_", 10) == 0 ||
+                    strncmp(name, "CP6_TR_OUT_", 11) == 0
+                );
+
+                if (!is_cproxy_chain) continue;
+
                 char *last_underscore = strrchr(name, '_');
                 if (last_underscore) {
                     pid_t pid = (pid_t)strtol(last_underscore + 1, NULL, 10);
