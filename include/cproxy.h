@@ -100,6 +100,7 @@ int check_dependencies(void);
 int init_cgroup_support(void);
 int setup_cgroup(pid_t pid);
 int is_cgroup_empty(void);
+void kill_cgroup_processes(void);
 void cleanup_cgroup(void);
 void cleanup_stale_cgroups(void);
 

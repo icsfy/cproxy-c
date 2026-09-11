@@ -169,6 +169,40 @@ int is_cgroup_empty(void) {
     return empty;
 }
 
+void kill_cgroup_processes(void) {
+    if (!g_ctx.cgroup_created || g_ctx.cgroup_path[0] == '\0') return;
+
+    // 1. Try atomic cgroup.kill (cgroup v2 on Linux 5.14+)
+    char kill_file[PATH_MAX + 64];
+    snprintf(kill_file, sizeof(kill_file), "%s/cgroup.kill", g_ctx.cgroup_path);
+    FILE *f = fopen(kill_file, "w");
+    if (f) {
+        fprintf(f, "1\n");
+        fclose(f);
+        return;
+    }
+
+    // 2. Fallback: sweep cgroup.procs / tasks and kill all remaining processes
+    char procs_file[PATH_MAX + 64];
+    snprintf(procs_file, sizeof(procs_file), "%s/cgroup.procs", g_ctx.cgroup_path);
+    f = fopen(procs_file, "r");
+    if (!f) {
+        snprintf(procs_file, sizeof(procs_file), "%s/tasks", g_ctx.cgroup_path);
+        f = fopen(procs_file, "r");
+    }
+
+    if (f) {
+        char buf[32];
+        while (fgets(buf, sizeof(buf), f)) {
+            pid_t pid = (pid_t)strtol(buf, NULL, 10);
+            if (pid > 0 && is_pid_alive(pid)) {
+                kill(pid, SIGKILL);
+            }
+        }
+        fclose(f);
+    }
+}
+
 void cleanup_cgroup(void) {
     if (!g_ctx.cgroup_created || g_ctx.cgroup_path[0] == '\0') return;
 

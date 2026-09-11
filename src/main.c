@@ -30,6 +30,9 @@ void do_clean_stale(void) {
     cleanup_stale_cgroups();
 }
 
+static char **s_target_argv = NULL;
+static int s_target_argc = 0;
+
 void cleanup(void) {
     static int cleaned_up = 0;
     if (cleaned_up) return;
@@ -50,6 +53,19 @@ void cleanup(void) {
         free(g_ctx.bypass_rules);
         g_ctx.bypass_rules = NULL;
     }
+    for (int i = 0; i < g_ctx.env_count; i++) {
+        if (g_ctx.env_vars[i]) {
+            free(g_ctx.env_vars[i]);
+            g_ctx.env_vars[i] = NULL;
+        }
+    }
+    g_ctx.env_count = 0;
+    if (s_target_argv) {
+        for (int i = 0; i < s_target_argc; i++) free(s_target_argv[i]);
+        free(s_target_argv);
+        s_target_argv = NULL;
+        s_target_argc = 0;
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -66,11 +82,25 @@ int main(int argc, char *argv[]) {
             target_argv[i] = strdup(argv[optind + i]);
         }
         target_argv[target_argc] = NULL;
+        s_target_argv = target_argv;
+        s_target_argc = target_argc;
+    }
+
+    bool contiguous = true;
+    for (int i = 0; i < argc - 1; i++) {
+        if (argv[i] + strlen(argv[i]) + 1 != argv[i + 1]) {
+            contiguous = false;
+            break;
+        }
     }
 
     size_t argv_len = 0;
-    for (int i = 0; i < argc; i++) {
-        argv_len += strlen(argv[i]) + 1;
+    if (contiguous) {
+        for (int i = 0; i < argc; i++) {
+            argv_len += strlen(argv[i]) + 1;
+        }
+    } else {
+        argv_len = strlen(argv[0]) + 1;
     }
 
     if (target_argc > 0) {
@@ -115,15 +145,14 @@ int main(int argc, char *argv[]) {
     sa.sa_flags = 0; // Disable SA_RESTART so waitpid can be interrupted by signals
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
 
     sigset_t mask, oldmask;
     if (is_attaching) {
         sigaction(SIGINT, &sa, NULL);
-        sigaction(SIGQUIT, &sa, NULL);
     } else {
         sigemptyset(&mask);
         sigaddset(&mask, SIGINT);
-        sigaddset(&mask, SIGQUIT);
         sigprocmask(SIG_BLOCK, &mask, &oldmask);
     }
 
@@ -213,7 +242,6 @@ int main(int argc, char *argv[]) {
         memset(&sa_ign, 0, sizeof(sa_ign));
         sa_ign.sa_handler = SIG_IGN;
         sigaction(SIGINT, &sa_ign, NULL);
-        sigaction(SIGQUIT, &sa_ign, NULL);
         sigprocmask(SIG_SETMASK, &oldmask, NULL);
 
         close(pipefd[0]);
@@ -262,14 +290,13 @@ int main(int argc, char *argv[]) {
                 kill(child_pid, SIGKILL);
                 while (waitpid(child_pid, &status, 0) == -1 && errno == EINTR);
             }
+            kill_cgroup_processes();
         }
 
         int wait_timeout = 50; // 5s
         while (!is_cgroup_empty() && wait_timeout-- > 0) usleep(100000);
-
-        if (target_argv) {
-            for (int i = 0; i < target_argc; i++) free(target_argv[i]);
-            free(target_argv);
+        if (!is_cgroup_empty()) {
+            kill_cgroup_processes();
         }
 
         return WIFEXITED(status) ? WEXITSTATUS(status) : (WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 0);

@@ -75,6 +75,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
             case 'D': ctx->dry_run = true; break;
             case 'C': ctx->clean_stale = true; break;
             case 'H':
+                if (getuid() != 0 && access(optarg, R_OK) != 0) {
+                    fprintf(stderr, "Error: Access denied to hosts file: %s\n", optarg);
+                    return -1;
+                }
                 if (realpath(optarg, ctx->custom_hosts) == NULL) {
                     fprintf(stderr, "Error: Invalid or inaccessible hosts file: %s\n", optarg);
                     return -1;
@@ -82,6 +86,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 ctx->has_custom_hosts = true;
                 break;
             case 'R':
+                if (getuid() != 0 && access(optarg, R_OK) != 0) {
+                    fprintf(stderr, "Error: Access denied to resolvconf file: %s\n", optarg);
+                    return -1;
+                }
                 if (realpath(optarg, ctx->custom_resolvconf) == NULL) {
                     fprintf(stderr, "Error: Invalid or inaccessible resolvconf file: %s\n", optarg);
                     return -1;
@@ -93,15 +101,21 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                     fprintf(stderr, "Error: Too many --mount arguments (max %d)\n", MAX_MOUNTS);
                     return -1;
                 }
-                char *colon = strchr(optarg, ':');
+                char mount_arg[PATH_MAX * 2 + 2];
+                snprintf(mount_arg, sizeof(mount_arg), "%s", optarg);
+                char *colon = strchr(mount_arg, ':');
                 if (!colon) {
                     fprintf(stderr, "Error: Invalid mount format. Expected <src>:<dest>\n");
                     return -1;
                 }
                 *colon = '\0';
-                char *src = optarg;
+                char *src = mount_arg;
                 char *dest = colon + 1;
                 
+                if (getuid() != 0 && access(src, R_OK) != 0) {
+                    fprintf(stderr, "Error: Access denied to mount source: %s\n", src);
+                    return -1;
+                }
                 if (realpath(src, ctx->mounts[ctx->mount_count].src) == NULL) {
                     fprintf(stderr, "Error: Invalid or inaccessible mount source: %s\n", src);
                     return -1;
@@ -114,6 +128,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 break;
             }
             case 'u':
+                if (getuid() != 0) {
+                    fprintf(stderr, "Error: --user cannot be used when running cproxy as a setuid binary.\n");
+                    return -1;
+                }
                 snprintf(ctx->run_as_user, sizeof(ctx->run_as_user), "%s", optarg);
                 break;
             case 'e':

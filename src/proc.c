@@ -2,17 +2,20 @@
 #include <sys/syscall.h>
 #include <poll.h>
 
-#ifndef __NR_pidfd_open
-#define __NR_pidfd_open 434
+#ifndef SYS_pidfd_open
+#ifdef __NR_pidfd_open
+#define SYS_pidfd_open __NR_pidfd_open
+#else
+#define SYS_pidfd_open 434
+#endif
 #endif
 
 static int my_pidfd_open(pid_t pid, unsigned int flags) {
-    return syscall(__NR_pidfd_open, pid, flags);
+    return syscall(SYS_pidfd_open, pid, flags);
 }
 
 void drop_privileges(void) {
     uid_t ruid = getuid();
-    uid_t euid = geteuid();
     gid_t rgid = getgid();
 
     char *sudo_user = getenv("SUDO_USER");
@@ -23,11 +26,13 @@ void drop_privileges(void) {
     gid_t target_gid = 0;
     struct passwd *pw = NULL;
 
-    if (g_ctx.run_as_user[0] != '\0') {
-        if (ruid != 0) {
-            fprintf(stderr, "FATAL: --user cannot be used when running cproxy as a setuid binary.\n");
-            _exit(1);
-        }
+    if (ruid != 0) {
+        // SetUID execution: strictly drop to the real invoking user.
+        // Never trust SUDO_* or other environment variables in SetUID mode!
+        target_uid = ruid;
+        target_gid = rgid;
+        pw = getpwuid(target_uid);
+    } else if (g_ctx.run_as_user[0] != '\0') {
         pw = getpwnam(g_ctx.run_as_user);
         if (!pw) {
             fprintf(stderr, "Error: User '%s' not found.\n", g_ctx.run_as_user);
@@ -39,14 +44,6 @@ void drop_privileges(void) {
         target_uid = (uid_t)strtol(sudo_uid_str, NULL, 10);
         target_gid = (gid_t)strtol(sudo_gid_str, NULL, 10);
         pw = getpwuid(target_uid);
-    } else if (ruid != 0 || euid == 0) {
-        // Not run via sudo, but might be setuid root.
-        // If ruid != 0, an unprivileged user ran the binary.
-        if (ruid != 0) {
-            target_uid = ruid;
-            target_gid = rgid;
-            pw = getpwuid(target_uid);
-        }
     }
 
     if (target_uid != 0 || pw != NULL) {
