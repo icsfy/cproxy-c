@@ -68,6 +68,13 @@ void drop_privileges(void) {
             _exit(1);
         }
 
+        if (ruid != 0) {
+            if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+                perror("prctl(PR_SET_NO_NEW_PRIVS) failed");
+                _exit(1);
+            }
+        }
+
         if (pw) {
             setenv("HOME", pw->pw_dir, 1);
             setenv("USER", pw->pw_name, 1);
@@ -119,6 +126,11 @@ int wait_for_process(pid_t pid) {
 }
 
 int check_process_ownership(pid_t pid) {
+    if (!is_pid_alive(pid)) {
+        log_error("Target PID %d does not exist or is not running", pid);
+        return -1;
+    }
+
     if (getuid() == 0) return 0; // root can attach to anything
 
     char path[256];

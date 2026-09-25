@@ -43,6 +43,52 @@ else
     exit 1
 fi
 
+# 5. Exit code propagation test
+sudo ./cproxy --mode redirect --port 1080 -- /non_existent_binary_xyz_12345 > /dev/null 2>&1
+STATUS=$?
+if [ $STATUS -eq 127 ]; then
+    echo "[PASS] Command not found returns 127"
+else
+    echo "[FAIL] Expected exit code 127 for command not found, got $STATUS"
+    exit 1
+fi
+
+sudo ./cproxy --mode redirect --port 1080 -- ./Makefile > /dev/null 2>&1
+STATUS=$?
+if [ $STATUS -eq 126 ]; then
+    echo "[PASS] Non-executable command returns 126"
+else
+    echo "[FAIL] Expected exit code 126 for non-executable file, got $STATUS"
+    exit 1
+fi
+
+# 6. SetUID security check (--mount rejected when non-root)
+./cproxy -M /dev/null:/tmp/test_cproxy -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] --mount rejected for non-root user"
+else
+    echo "[FAIL] --mount was allowed for non-root user"
+    exit 1
+fi
+
+# 7. Invalid PID check
+sudo ./cproxy -i 9999999 > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Non-existent PID rejected"
+else
+    echo "[FAIL] Non-existent PID was accepted"
+    exit 1
+fi
+
+# 8. Conflict between --pid and command
+sudo ./cproxy -i $$ -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Simultaneous --pid and command rejected"
+else
+    echo "[FAIL] Simultaneous --pid and command was accepted"
+    exit 1
+fi
+
 # We can't easily test real functionality without being root and potentially messing with system state,
 # but dry-run covers most of the logic.
 

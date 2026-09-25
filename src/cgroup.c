@@ -19,15 +19,24 @@ static int write_cg_file(const char *name, const char *fmt, ...) {
 static int add_pid_to_cgroup(pid_t pid, const char *path) {
     char file[PATH_MAX + 64];
     snprintf(file, sizeof(file), "%s/cgroup.procs", path);
-    FILE *f = fopen(file, "w");
-    if (!f) {
+    int fd = open(file, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
         snprintf(file, sizeof(file), "%s/tasks", path);
-        f = fopen(file, "w");
+        fd = open(file, O_WRONLY | O_CLOEXEC);
     }
-    if (!f) return -1;
-    fprintf(f, "%d\n", pid);
-    fclose(f);
-    return 0;
+    if (fd < 0) return -1;
+
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%d\n", pid);
+    ssize_t written;
+    while ((written = write(fd, buf, len)) == -1 && errno == EINTR);
+    int saved_errno = (written == len) ? 0 : errno;
+    int close_res = close(fd);
+    if (saved_errno != 0) {
+        errno = saved_errno;
+        return -1;
+    }
+    return (close_res == 0) ? 0 : -1;
 }
 
 static void move_pids_to_parent(const char *cgroup_path, const char *parent_path) {
@@ -228,7 +237,7 @@ void cleanup_cgroup(void) {
 }
 
 static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {
-    if (depth > 5) return; // Prevent too deep recursion or loops
+    if (depth > 16) return; // Prevent too deep recursion or loops
 
     DIR *dir = opendir(base_path);
     if (!dir) return;

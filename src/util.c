@@ -115,6 +115,11 @@ int parse_bypass_rules(Context *ctx) {
     if (!ctx->bypass_rules) return -1;
 
     copy = strdup(ctx->bypass_str);
+    if (!copy) {
+        free(ctx->bypass_rules);
+        ctx->bypass_rules = NULL;
+        return -1;
+    }
     token = strtok_r(copy, ",", &saveptr);
     int idx = 0;
     while (token) {

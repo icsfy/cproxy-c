@@ -258,10 +258,13 @@ void cleanup_iptables(void) {
         }
 
         if (g_ctx.has_override_dns) {
-            char dns4[128], dns6[128];
-            get_chain_name(dns4, sizeof(dns4), "TP_DNS", pid, false);
-            destroy_chain("nat", dns4, "OUTPUT", "iptables", cg_match);
-            if (has_ip6tables()) {
+            if (is_valid_ipv4(g_ctx.override_dns)) {
+                char dns4[128];
+                get_chain_name(dns4, sizeof(dns4), "TP_DNS", pid, false);
+                destroy_chain("nat", dns4, "OUTPUT", "iptables", cg_match);
+            }
+            if (has_ip6tables() && is_valid_ipv6(g_ctx.override_dns)) {
+                char dns6[128];
                 get_chain_name(dns6, sizeof(dns6), "TP_DNS", pid, true);
                 destroy_chain("nat", dns6, "OUTPUT", "ip6tables", cg_match);
             }

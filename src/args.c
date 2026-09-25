@@ -97,6 +97,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 ctx->has_custom_resolvconf = true;
                 break;
             case 'M': {
+                if (getuid() != 0) {
+                    fprintf(stderr, "Error: --mount cannot be used when running cproxy as a setuid binary.\n");
+                    return -1;
+                }
                 if (ctx->mount_count >= MAX_MOUNTS) {
                     fprintf(stderr, "Error: Too many --mount arguments (max %d)\n", MAX_MOUNTS);
                     return -1;
@@ -112,10 +116,6 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 char *src = mount_arg;
                 char *dest = colon + 1;
                 
-                if (getuid() != 0 && access(src, R_OK) != 0) {
-                    fprintf(stderr, "Error: Access denied to mount source: %s\n", src);
-                    return -1;
-                }
                 if (realpath(src, ctx->mounts[ctx->mount_count].src) == NULL) {
                     fprintf(stderr, "Error: Invalid or inaccessible mount source: %s\n", src);
                     return -1;
@@ -201,6 +201,11 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     if (ctx->target_pid == 0 && optind >= argc) {
         fprintf(stderr, "Error: No command specified and no --pid provided.\n");
+        return -1;
+    }
+
+    if (ctx->target_pid > 0 && optind < argc) {
+        fprintf(stderr, "Error: Cannot specify both --pid and a command to run.\n");
         return -1;
     }
 

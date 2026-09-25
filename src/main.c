@@ -71,21 +71,6 @@ void cleanup(void) {
 int main(int argc, char *argv[]) {
     atexit(cleanup);
 
-    if (parse_args(&g_ctx, argc, argv) != 0) return 1;
-    if (parse_bypass_rules(&g_ctx) != 0) return 1;
-
-    int target_argc = argc - optind;
-    char **target_argv = NULL;
-    if (target_argc > 0) {
-        target_argv = malloc((target_argc + 1) * sizeof(char *));
-        for (int i = 0; i < target_argc; i++) {
-            target_argv[i] = strdup(argv[optind + i]);
-        }
-        target_argv[target_argc] = NULL;
-        s_target_argv = target_argv;
-        s_target_argc = target_argc;
-    }
-
     bool contiguous = true;
     for (int i = 0; i < argc - 1; i++) {
         if (argv[i] + strlen(argv[i]) + 1 != argv[i + 1]) {
@@ -101,6 +86,29 @@ int main(int argc, char *argv[]) {
         }
     } else {
         argv_len = strlen(argv[0]) + 1;
+    }
+
+    if (parse_args(&g_ctx, argc, argv) != 0) return 1;
+    if (parse_bypass_rules(&g_ctx) != 0) return 1;
+
+    int target_argc = argc - optind;
+    char **target_argv = NULL;
+    if (target_argc > 0) {
+        target_argv = malloc((target_argc + 1) * sizeof(char *));
+        if (!target_argv) {
+            perror("malloc failed");
+            return 1;
+        }
+        for (int i = 0; i < target_argc; i++) {
+            target_argv[i] = strdup(argv[optind + i]);
+            if (!target_argv[i]) {
+                perror("strdup failed");
+                return 1;
+            }
+        }
+        target_argv[target_argc] = NULL;
+        s_target_argv = target_argv;
+        s_target_argc = target_argc;
     }
 
     if (target_argc > 0) {
@@ -122,7 +130,6 @@ int main(int argc, char *argv[]) {
         prctl(PR_SET_NAME, "cproxy-attach", 0, 0, 0);
     }
 
-
     if (!g_ctx.dry_run && geteuid() != 0) {
         log_error("cproxy must be run as root (use sudo)");
         return 1;
@@ -138,6 +145,10 @@ int main(int argc, char *argv[]) {
     }
 
     bool is_attaching = (g_ctx.target_pid > 0);
+    if (is_attaching && check_process_ownership(g_ctx.target_pid) != 0) {
+        g_ctx.target_pid = 0;
+        return 1;
+    }
 
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -200,27 +211,34 @@ int main(int argc, char *argv[]) {
             close(pipefd[0]);
 
             if (g_ctx.has_custom_hosts || g_ctx.has_custom_resolvconf || g_ctx.mount_count > 0) {
-                if (unshare(CLONE_NEWNS) == 0) {
-                    mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL);
-                    
-                    if (g_ctx.has_custom_hosts) {
-                        if (mount(g_ctx.custom_hosts, "/etc/hosts", NULL, MS_BIND, NULL) < 0) {
-                            perror("Failed to bind mount custom hosts file");
-                        }
-                    }
-                    if (g_ctx.has_custom_resolvconf) {
-                        if (mount(g_ctx.custom_resolvconf, "/etc/resolv.conf", NULL, MS_BIND, NULL) < 0) {
-                            perror("Failed to bind mount custom resolv.conf file");
-                        }
-                    }
-                    for (int i = 0; i < g_ctx.mount_count; i++) {
-                        if (mount(g_ctx.mounts[i].src, g_ctx.mounts[i].dest, NULL, MS_BIND, NULL) < 0) {
-                            fprintf(stderr, "Failed to bind mount %s to %s: %s\n", 
-                                    g_ctx.mounts[i].src, g_ctx.mounts[i].dest, strerror(errno));
-                        }
-                    }
-                } else {
+                if (unshare(CLONE_NEWNS) != 0) {
                     perror("unshare(CLONE_NEWNS) failed");
+                    _exit(1);
+                }
+
+                if (mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
+                    perror("mount MS_PRIVATE failed");
+                    _exit(1);
+                }
+                
+                if (g_ctx.has_custom_hosts) {
+                    if (mount(g_ctx.custom_hosts, "/etc/hosts", NULL, MS_BIND, NULL) < 0) {
+                        perror("Failed to bind mount custom hosts file");
+                        _exit(1);
+                    }
+                }
+                if (g_ctx.has_custom_resolvconf) {
+                    if (mount(g_ctx.custom_resolvconf, "/etc/resolv.conf", NULL, MS_BIND, NULL) < 0) {
+                        perror("Failed to bind mount custom resolv.conf file");
+                        _exit(1);
+                    }
+                }
+                for (int i = 0; i < g_ctx.mount_count; i++) {
+                    if (mount(g_ctx.mounts[i].src, g_ctx.mounts[i].dest, NULL, MS_BIND, NULL) < 0) {
+                        fprintf(stderr, "Failed to bind mount %s to %s: %s\n", 
+                                g_ctx.mounts[i].src, g_ctx.mounts[i].dest, strerror(errno));
+                        _exit(1);
+                    }
                 }
             }
 
@@ -235,8 +253,9 @@ int main(int argc, char *argv[]) {
             }
             
             execvp(target_argv[0], target_argv);
+            int err = errno;
             perror("execvp failed");
-            _exit(1);
+            _exit(err == ENOENT ? 127 : 126);
         }
         struct sigaction sa_ign;
         memset(&sa_ign, 0, sizeof(sa_ign));
@@ -250,6 +269,7 @@ int main(int argc, char *argv[]) {
     pid_t process_to_proxy = is_attaching ? g_ctx.target_pid : child_pid;
 
     if (is_attaching && check_process_ownership(process_to_proxy) != 0) {
+        g_ctx.target_pid = 0;
         return 1;
     }
 
