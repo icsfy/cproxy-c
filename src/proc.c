@@ -68,13 +68,6 @@ void drop_privileges(void) {
             _exit(1);
         }
 
-        if (ruid != 0) {
-            if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-                perror("prctl(PR_SET_NO_NEW_PRIVS) failed");
-                _exit(1);
-            }
-        }
-
         if (pw) {
             setenv("HOME", pw->pw_dir, 1);
             setenv("USER", pw->pw_name, 1);

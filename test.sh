@@ -89,6 +89,16 @@ else
     exit 1
 fi
 
+# 9. Verify sudo / privilege elevation works under setuid cproxy
+sudo chown root:root cproxy && sudo chmod 4755 cproxy
+OUTPUT=$(./cproxy --mode redirect --port 1080 -- sudo whoami 2>&1)
+if [[ "$OUTPUT" == *"root"* ]]; then
+    echo "[PASS] sudo works correctly under setuid cproxy"
+else
+    echo "[FAIL] sudo failed under cproxy: $OUTPUT"
+    exit 1
+fi
+
 # We can't easily test real functionality without being root and potentially messing with system state,
 # but dry-run covers most of the logic.
 
