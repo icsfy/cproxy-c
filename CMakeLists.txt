@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(cproxy C)
+project(cproxy VERSION 1.4.0 LANGUAGES C)
 
 # Prevent in-tree builds to safeguard the custom Makefile
 if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})

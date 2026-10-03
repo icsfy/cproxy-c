@@ -270,6 +270,40 @@ static int setup_trace(pid_t pid, const char *cg_match) {
     return 0;
 }
 
+static int setup_direct(pid_t pid, const char *cg_match) {
+    if (g_ctx.ipv4_only && has_ip6tables()) {
+        char blk6[128];
+        get_chain_name(blk6, sizeof(blk6), "BLK_OUT", pid, true);
+        CHECK(init_chain("raw", blk6, "OUTPUT", "ip6tables", cg_match));
+        CHECK(apply_bypass_rules(blk6, "raw", "ip6tables"));
+        CHECK(run_cmd("ip6tables -w -t raw -A %s -o lo -j RETURN", blk6));
+        CHECK(run_cmd("ip6tables -w -t raw -A %s -j DROP", blk6));
+    } else if (g_ctx.ipv6_only) {
+        if (!has_ip6tables()) {
+            log_error("IPv6 support requested (--ipv6-only) but ip6tables not available.");
+            return -1;
+        }
+        if (has_iptables()) {
+            char blk4[128];
+            get_chain_name(blk4, sizeof(blk4), "BLK_OUT", pid, false);
+            CHECK(init_chain("raw", blk4, "OUTPUT", "iptables", cg_match));
+            CHECK(apply_bypass_rules(blk4, "raw", "iptables"));
+            CHECK(run_cmd("iptables -w -t raw -A %s -o lo -j RETURN", blk4));
+            CHECK(run_cmd("iptables -w -t raw -A %s -j DROP", blk4));
+        }
+    }
+
+    if (g_ctx.has_override_dns) {
+        if (!g_ctx.ipv6_only && has_iptables()) {
+            CHECK(apply_dns_override_for_family(AF_INET, pid, cg_match));
+        }
+        if (!g_ctx.ipv4_only && has_ip6tables()) {
+            CHECK(apply_dns_override_for_family(AF_INET6, pid, cg_match));
+        }
+    }
+    return 0;
+}
+
 int setup_iptables(pid_t pid) {
     char cg_match[256];
     get_cgroup_match(cg_match, sizeof(cg_match), pid);
@@ -281,6 +315,7 @@ int setup_iptables(pid_t pid) {
         case MODE_REDIRECT: return setup_redirect(pid, cg_match);
         case MODE_TPROXY:   return setup_tproxy(pid, cg_match, mark_match);
         case MODE_TRACE:    return setup_trace(pid, cg_match);
+        case MODE_DIRECT:   return setup_direct(pid, cg_match);
     }
     return -1;
 }
@@ -358,6 +393,31 @@ void cleanup_iptables(void) {
         if (has_ip6tables()) {
             get_chain_name(out6, sizeof(out6), "TR_OUT", pid, true);
             destroy_chain("raw", out6, "OUTPUT", "ip6tables", cg_match);
+        }
+    } else if (g_ctx.mode == MODE_DIRECT) {
+        if (has_iptables()) {
+            if (g_ctx.ipv6_only) {
+                char blk4[128];
+                get_chain_name(blk4, sizeof(blk4), "BLK_OUT", pid, false);
+                destroy_chain("raw", blk4, "OUTPUT", "iptables", cg_match);
+            }
+            if (g_ctx.has_override_dns && is_valid_ipv4(g_ctx.override_dns)) {
+                char dns4[128];
+                get_chain_name(dns4, sizeof(dns4), "TP_DNS", pid, false);
+                destroy_chain("nat", dns4, "OUTPUT", "iptables", cg_match);
+            }
+        }
+        if (has_ip6tables()) {
+            if (g_ctx.ipv4_only) {
+                char blk6[128];
+                get_chain_name(blk6, sizeof(blk6), "BLK_OUT", pid, true);
+                destroy_chain("raw", blk6, "OUTPUT", "ip6tables", cg_match);
+            }
+            if (g_ctx.has_override_dns && is_valid_ipv6(g_ctx.override_dns)) {
+                char dns6[128];
+                get_chain_name(dns6, sizeof(dns6), "TP_DNS", pid, true);
+                destroy_chain("nat", dns6, "OUTPUT", "ip6tables", cg_match);
+            }
         }
     }
 }

@@ -170,9 +170,15 @@ int main(int argc, char *argv[]) {
     }
 
     if (g_ctx.verbose) {
-        const char *mode_str = (g_ctx.mode == MODE_REDIRECT) ? "redirect" : (g_ctx.mode == MODE_TPROXY ? "tproxy" : "trace");
+        const char *mode_str = (g_ctx.mode == MODE_REDIRECT) ? "redirect" :
+                               (g_ctx.mode == MODE_TPROXY ? "tproxy" :
+                               (g_ctx.mode == MODE_TRACE ? "trace" : "direct"));
         log_info("Detected Cgroup v%d mode", g_ctx.is_v2 ? 2 : 1);
-        log_info("Mode: %s, Port: %d (DNS: %d)", mode_str, g_ctx.port, g_ctx.dns_port);
+        if (g_ctx.mode == MODE_DIRECT) {
+            log_info("Mode: direct (no proxy)");
+        } else {
+            log_info("Mode: %s, Port: %d (DNS: %d)", mode_str, g_ctx.port, g_ctx.dns_port);
+        }
         if (g_ctx.ipv4_only)
             log_info("Network: IPv4 only");
         else if (g_ctx.ipv6_only)
@@ -188,8 +194,10 @@ int main(int argc, char *argv[]) {
 
     if (is_attaching) {
         log_warn("You are attaching to an existing process (PID: %d).", g_ctx.target_pid);
-        log_warn("Due to Linux kernel limitations, already established connections and listening sockets WILL NOT be proxied.");
-        log_warn("Only NEW connections created after this point will be routed through the proxy.");
+        if (g_ctx.mode != MODE_DIRECT) {
+            log_warn("Due to Linux kernel limitations, already established connections and listening sockets WILL NOT be proxied.");
+            log_warn("Only NEW connections created after this point will be routed through the proxy.");
+        }
     }
 
     if (!g_ctx.has_override_dns && (g_ctx.mode == MODE_TPROXY || g_ctx.redirect_dns)) {
@@ -253,7 +261,11 @@ int main(int argc, char *argv[]) {
             drop_privileges();
 
             char env_str[64];
-            snprintf(env_str, sizeof(env_str), "cproxy/%d", g_ctx.port);
+            if (g_ctx.mode == MODE_DIRECT) {
+                snprintf(env_str, sizeof(env_str), "cproxy/direct");
+            } else {
+                snprintf(env_str, sizeof(env_str), "cproxy/%d", g_ctx.port);
+            }
             setenv("CPROXY_ENV", env_str, 1);
             
             for (int i = 0; i < g_ctx.env_count; i++) {
@@ -289,7 +301,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (is_attaching) {
-        printf("Proxying PID %d. Press Ctrl+C to stop...\n", g_ctx.target_pid);
+        if (g_ctx.mode == MODE_DIRECT) {
+            printf("Monitoring PID %d in direct mode. Press Ctrl+C to stop...\n", g_ctx.target_pid);
+        } else {
+            printf("Proxying PID %d. Press Ctrl+C to stop...\n", g_ctx.target_pid);
+        }
         wait_for_process(g_ctx.target_pid);
     } else {
         ssize_t nwritten;

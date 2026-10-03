@@ -197,14 +197,14 @@ make clean && make
 run_test "redirect"
 run_test "tproxy"
 
-# Test --hosts mount namespace bypass
-log_info "Testing custom --hosts mount isolation..."
+# Test --hosts mount namespace with --mode direct
+log_info "Testing custom --hosts mount isolation in direct mode..."
 cat << 'EOF' > custom_hosts.test
 127.0.2.2 my-dummy-domain.local
 EOF
-OUTPUT=$(sudo ./cproxy --mode trace --hosts custom_hosts.test -- curl -v -s -m 2 http://my-dummy-domain.local 2>&1)
+OUTPUT=$(sudo ./cproxy --mode direct --hosts custom_hosts.test -- curl -v -s -m 2 http://my-dummy-domain.local 2>&1)
 if echo "$OUTPUT" | grep -q "Trying 127.0.2.2"; then
-    log_info "PASS: --hosts custom file mounted and respected successfully"
+    log_info "PASS: --hosts custom file mounted and respected successfully in direct mode"
 else
     log_error "FAIL: --hosts custom file mount failed"
     echo "Output: $OUTPUT"
@@ -213,15 +213,14 @@ else
 fi
 rm -f custom_hosts.test
 
-# Test --resolvconf mount namespace bypass
-log_info "Testing custom --resolvconf mount isolation..."
+# Test --resolvconf mount namespace with --no-proxy
+log_info "Testing custom --resolvconf mount isolation with --no-proxy..."
 cat << 'EOF' > custom_resolv.test
 nameserver 127.0.2.3
 EOF
-# If resolv.conf is mounted correctly, cat /etc/resolv.conf should show our custom content
-OUTPUT=$(sudo ./cproxy --mode trace --resolvconf custom_resolv.test -- cat /etc/resolv.conf)
+OUTPUT=$(sudo ./cproxy --no-proxy --resolvconf custom_resolv.test -- cat /etc/resolv.conf)
 if echo "$OUTPUT" | grep -q "nameserver 127.0.2.3"; then
-    log_info "PASS: --resolvconf custom file mounted and respected successfully"
+    log_info "PASS: --resolvconf custom file mounted and respected successfully with --no-proxy"
 else
     log_error "FAIL: --resolvconf custom file mount failed"
     echo "Output: $OUTPUT"
@@ -230,15 +229,14 @@ else
 fi
 rm -f custom_resolv.test
 
-# Test --mount generic namespace bypass
-log_info "Testing generic --mount isolation..."
+# Test --mount generic namespace in direct mode
+log_info "Testing generic --mount isolation in direct mode..."
 cat << 'EOF' > dummy_config.test
 { "mocked": true }
 EOF
-# We mount our dummy JSON over /etc/timezone just as a safe, generic target that exists on most systems
-OUTPUT=$(sudo ./cproxy --mode trace --mount dummy_config.test:/etc/timezone -- cat /etc/timezone)
+OUTPUT=$(sudo ./cproxy --mode direct --mount dummy_config.test:/etc/timezone -- cat /etc/timezone)
 if echo "$OUTPUT" | grep -q "mocked"; then
-    log_info "PASS: --mount custom generic file mounted and respected successfully"
+    log_info "PASS: --mount custom generic file mounted and respected successfully in direct mode"
 else
     log_error "FAIL: --mount custom generic file mount failed"
     echo "Output: $OUTPUT"
@@ -246,5 +244,39 @@ else
     exit 1
 fi
 rm -f dummy_config.test
+
+# Test direct TCP connectivity (without running any proxy)
+log_info "Testing direct outbound connection without proxy..."
+DIRECT_PORT=19999
+cat << 'EOF' > test_direct_server.py
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', int(sys.argv[1])))
+s.listen(1)
+while True:
+    try:
+        conn, addr = s.accept()
+        conn.sendall(b"HTTP/1.1 200 OK\r\n\r\ndirect connection works!")
+        conn.close()
+    except:
+        break
+EOF
+setsid python3 test_direct_server.py $DIRECT_PORT > /dev/null 2>&1 &
+DIRECT_SERVER_PID=$!
+wait_for_port $DIRECT_PORT || { log_error "Direct test server failed to start"; kill -- -$DIRECT_SERVER_PID 2>/dev/null; exit 1; }
+
+OUTPUT=$(sudo ./cproxy --mode direct -- curl -s -m 5 http://127.0.0.1:$DIRECT_PORT)
+if [[ "$OUTPUT" == *"direct connection works!"* ]]; then
+    log_info "PASS: direct mode connects directly without proxy"
+else
+    log_error "FAIL: direct mode connection failed"
+    echo "Output: $OUTPUT"
+    kill -- -$DIRECT_SERVER_PID 2>/dev/null
+    exit 1
+fi
+kill -- -$DIRECT_SERVER_PID 2>/dev/null
+wait $DIRECT_SERVER_PID 2>/dev/null
+rm -f test_direct_server.py
 
 log_info "All end-to-end tests passed successfully!"

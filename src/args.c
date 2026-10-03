@@ -7,6 +7,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"dns-port", required_argument, 0, 'l'},
         {"redirect-dns", no_argument, 0, 'd'},
         {"mode", required_argument, 0, 'm'},
+        {"no-proxy", no_argument, 0, 'n'},
         {"override-dns", required_argument, 0, 'o'},
         {"pid", required_argument, 0, 'i'},
         {"bypass", required_argument, 0, 'b'},
@@ -29,17 +30,19 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:M:u:e:VDChv46", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:no:i:b:H:R:M:u:e:VDChv46", long_options, &option_index)) != -1) {
         switch (opt) {
             case '4': ctx->ipv4_only = true; break;
             case '6': ctx->ipv6_only = true; break;
+            case 'n': snprintf(mode_str, sizeof(mode_str), "direct"); break;
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
                 fprintf(stderr, "Usage: %s [options] -- <command...>\n", argv[0]);
                 fprintf(stderr, "Options:\n");
                 fprintf(stderr, "  -p, --port <port>         Proxy port (default: 1080)\n");
                 fprintf(stderr, "  -l, --dns-port <port>     DNS proxy port (default: same as --port)\n");
-                fprintf(stderr, "  -m, --mode <mode>         Mode: redirect (default), tproxy, trace\n");
+                fprintf(stderr, "  -m, --mode <mode>         Mode: redirect (default), tproxy, trace, direct\n");
+                fprintf(stderr, "  -n, --no-proxy            Do not proxy traffic (alias for --mode direct)\n");
                 fprintf(stderr, "  -4, --ipv4-only           Enable IPv4 only (drop IPv6 to prevent leaks)\n");
                 fprintf(stderr, "  -6, --ipv6-only           Enable IPv6 only (drop IPv4 to prevent leaks)\n");
                 fprintf(stderr, "  -d, --redirect-dns        Redirect DNS in redirect mode\n");
@@ -198,6 +201,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
     if (strcmp(mode_str, "redirect") == 0) ctx->mode = MODE_REDIRECT;
     else if (strcmp(mode_str, "tproxy") == 0) ctx->mode = MODE_TPROXY;
     else if (strcmp(mode_str, "trace") == 0) ctx->mode = MODE_TRACE;
+    else if (strcmp(mode_str, "direct") == 0 || strcmp(mode_str, "none") == 0 || strcmp(mode_str, "passthrough") == 0) ctx->mode = MODE_DIRECT;
     else {
         fprintf(stderr, "Unknown mode: %s\n", mode_str);
         return -1;

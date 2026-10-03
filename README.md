@@ -21,6 +21,7 @@ Traditional tools like `proxychains` rely on `LD_PRELOAD` to hook socket functio
 * **Redirect Mode:** Intercepts outbound TCP and REDIRECTs it to a local port. Drops IPv6 to prevent leaks.
 * **TProxy Mode (Bidirectional-Safe):** Transparently proxies TCP and UDP outbound traffic (IPv4/IPv6) with optional DNS override. Through flow-directional Conntrack marking, inbound connections to server applications running inside the cgroup are preserved and bypassed, allowing you to proxy server processes safely!
 * **IPv4 / IPv6 Single-Stack Modes:** Explicitly enforce single-stack routing with `-4` (`--ipv4-only`) or `-6` (`--ipv6-only`) to avoid dual-stack connection issues when local proxies bind only to `127.0.0.1` or `::1`, automatically blocking the unselected family to prevent IP leaks.
+* **Direct (No-Proxy) Mode:** Bypass traffic proxying using `--mode direct` (or `--no-proxy`) while keeping all process supervision and sandbox features active: mount namespace overrides, DNS redirection (`--override-dns`), single-stack enforcement (`-4`/`-6`), and cgroup process tree termination.
 * **Trace Mode:** Audits and logs application network activity in real time using the `iptables LOG` target.
 * **Process Attaching:** Dynamically intercepts traffic of an already running process via `--pid`.
 * **Namespace Isolation:** Bind mount custom files (`--hosts`, `--resolvconf`) or generic paths (`--mount src:dest`) to safely mock configs without altering the host.
@@ -99,11 +100,28 @@ You can isolate the proxied process in a mount namespace and override specific f
 echo "nameserver 8.8.8.8" > my_resolv.conf
 sudo ./cproxy --mode tproxy --resolvconf my_resolv.conf --hosts /dev/null -- curl http://local-domain
 
-# Mock any generic file using the --mount flag (e.g., hiding machine-id)
-sudo ./cproxy --mode trace --mount /dev/null:/etc/machine-id -- cat /etc/machine-id
+# Mock any generic file using the --mount flag (e.g., hiding machine-id) without proxying
+sudo ./cproxy --mode direct --mount /dev/null:/etc/machine-id -- cat /etc/machine-id
 ```
 
-### 8. Cleaning up stale rules
+### 8. Running Without a Proxy (`--mode direct` or `--no-proxy`)
+If you do not want to route general traffic through a proxy, but want to use `cproxy-c`'s other capabilities (mount namespaces, single-stack blocking, DNS override, or process tree termination), use `--mode direct` or `--no-proxy`:
+
+```bash
+# Mock /etc/hosts or resolv.conf for tests without proxying:
+sudo ./cproxy --no-proxy --hosts ./custom_hosts -- ./run_tests.sh
+
+# Force IPv4-only (drop IPv6) without running a proxy:
+sudo ./cproxy --mode direct -4 -- curl https://example.com
+
+# Transparently override DNS resolution without proxying TCP/UDP:
+sudo ./cproxy --mode direct --override-dns 1.1.1.1 -- ./my_app
+
+# Run a daemon as a specific user with automatic cgroup child-process cleanup:
+sudo ./cproxy --no-proxy --user nobody -- ./my_service
+```
+
+### 9. Cleaning up stale rules
 If `cproxy-c` crashes unexpectedly, clean up orphaned iptables rules and cgroups:
 ```bash
 sudo ./cproxy --clean

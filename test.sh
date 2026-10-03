@@ -158,7 +158,54 @@ else
     exit 1
 fi
 
-# We can't easily test real functionality without being root and potentially messing with system state,
-# but dry-run covers most of the logic.
+# 13. Direct mode and --no-proxy tests
+sudo ./cproxy -D --mode direct -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] --mode direct works in dry run"
+else
+    echo "[FAIL] --mode direct failed in dry run"
+    exit 1
+fi
+
+sudo ./cproxy -D --no-proxy -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] --no-proxy works in dry run"
+else
+    echo "[FAIL] --no-proxy failed in dry run"
+    exit 1
+fi
+
+sudo ./cproxy -D --mode direct -4 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] --mode direct -4 works in dry run"
+else
+    echo "[FAIL] --mode direct -4 failed in dry run"
+    exit 1
+fi
+
+sudo ./cproxy -D --mode direct -6 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] --mode direct -6 works in dry run"
+else
+    echo "[FAIL] --mode direct -6 failed in dry run"
+    exit 1
+fi
+
+sudo ./cproxy -D --mode direct -o 1.1.1.1 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] --mode direct with --override-dns works in dry run"
+else
+    echo "[FAIL] --mode direct with --override-dns failed in dry run"
+    exit 1
+fi
+
+# 14. Direct mode live CPROXY_ENV verification
+OUTPUT=$(sudo ./cproxy --mode direct -- sh -c 'echo $CPROXY_ENV')
+if [ "$OUTPUT" = "cproxy/direct" ]; then
+    echo "[PASS] CPROXY_ENV is set to cproxy/direct in direct mode"
+else
+    echo "[FAIL] Unexpected CPROXY_ENV in direct mode: $OUTPUT"
+    exit 1
+fi
 
 echo "All basic tests passed!"

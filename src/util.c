@@ -153,6 +153,9 @@ int parse_bypass_rules(Context *ctx) {
 }
 
 int check_dependencies(void) {
+    if (g_ctx.mode == MODE_DIRECT && !g_ctx.ipv4_only && !g_ctx.ipv6_only && !g_ctx.has_override_dns) {
+        return 0;
+    }
     if (!g_ctx.ipv6_only && run_cmd_silent("iptables --version") != 0) {
         log_error("'iptables' command not found. Please install it.");
         return -1;

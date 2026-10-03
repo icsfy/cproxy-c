@@ -20,9 +20,9 @@
 #include <limits.h>
 #include <sys/prctl.h>
 
-#define CPROXY_VERSION "1.3.0"
+#define CPROXY_VERSION "1.4.0"
 
-enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
+enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE, MODE_DIRECT };
 
 #define MAX_MOUNTS 16
 
