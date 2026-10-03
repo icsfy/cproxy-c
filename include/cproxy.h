@@ -20,7 +20,7 @@
 #include <limits.h>
 #include <sys/prctl.h>
 
-#define CPROXY_VERSION "1.2.2"
+#define CPROXY_VERSION "1.3.0"
 
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE };
 
@@ -64,6 +64,8 @@ typedef struct {
     int env_count;
     CustomMount mounts[MAX_MOUNTS];
     int mount_count;
+    bool ipv4_only;
+    bool ipv6_only;
 } Context;
 
 extern Context g_ctx;

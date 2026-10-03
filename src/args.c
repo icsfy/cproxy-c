@@ -18,6 +18,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         {"mount", required_argument, 0, 'M'},
         {"user", required_argument, 0, 'u'},
         {"env", required_argument, 0, 'e'},
+        {"ipv4-only", no_argument, 0, '4'},
+        {"ipv4", no_argument, 0, '4'},
+        {"ipv6-only", no_argument, 0, '6'},
+        {"ipv6", no_argument, 0, '6'},
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
         {0, 0, 0, 0}
@@ -25,8 +29,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:M:u:e:VDChv", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "p:l:dm:o:i:b:H:R:M:u:e:VDChv46", long_options, &option_index)) != -1) {
         switch (opt) {
+            case '4': ctx->ipv4_only = true; break;
+            case '6': ctx->ipv6_only = true; break;
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
                 fprintf(stderr, "Usage: %s [options] -- <command...>\n", argv[0]);
@@ -34,6 +40,8 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 fprintf(stderr, "  -p, --port <port>         Proxy port (default: 1080)\n");
                 fprintf(stderr, "  -l, --dns-port <port>     DNS proxy port (default: same as --port)\n");
                 fprintf(stderr, "  -m, --mode <mode>         Mode: redirect (default), tproxy, trace\n");
+                fprintf(stderr, "  -4, --ipv4-only           Enable IPv4 only (drop IPv6 to prevent leaks)\n");
+                fprintf(stderr, "  -6, --ipv6-only           Enable IPv6 only (drop IPv4 to prevent leaks)\n");
                 fprintf(stderr, "  -d, --redirect-dns        Redirect DNS in redirect mode\n");
                 fprintf(stderr, "  -o, --override-dns <ip>   Override DNS IP (DNAT/TProxy)\n");
                 fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
@@ -192,6 +200,21 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
     else if (strcmp(mode_str, "trace") == 0) ctx->mode = MODE_TRACE;
     else {
         fprintf(stderr, "Unknown mode: %s\n", mode_str);
+        return -1;
+    }
+
+    if (ctx->ipv4_only && ctx->ipv6_only) {
+        fprintf(stderr, "Error: Cannot specify both -4/--ipv4-only and -6/--ipv6-only.\n");
+        return -1;
+    }
+
+    if (ctx->ipv4_only && ctx->has_override_dns && is_valid_ipv6(ctx->override_dns)) {
+        fprintf(stderr, "Error: --override-dns cannot be an IPv6 address when --ipv4-only is specified.\n");
+        return -1;
+    }
+
+    if (ctx->ipv6_only && ctx->has_override_dns && is_valid_ipv4(ctx->override_dns)) {
+        fprintf(stderr, "Error: --override-dns cannot be an IPv4 address when --ipv6-only is specified.\n");
         return -1;
     }
 

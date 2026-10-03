@@ -14,7 +14,9 @@ Context g_ctx = {
     .cgroup_created = false,
     .target_pid = 0,
     .is_v2 = false,
-    .clean_stale = false
+    .clean_stale = false,
+    .ipv4_only = false,
+    .ipv6_only = false
 };
 
 volatile sig_atomic_t g_keep_running = 1;
@@ -171,6 +173,12 @@ int main(int argc, char *argv[]) {
         const char *mode_str = (g_ctx.mode == MODE_REDIRECT) ? "redirect" : (g_ctx.mode == MODE_TPROXY ? "tproxy" : "trace");
         log_info("Detected Cgroup v%d mode", g_ctx.is_v2 ? 2 : 1);
         log_info("Mode: %s, Port: %d (DNS: %d)", mode_str, g_ctx.port, g_ctx.dns_port);
+        if (g_ctx.ipv4_only)
+            log_info("Network: IPv4 only");
+        else if (g_ctx.ipv6_only)
+            log_info("Network: IPv6 only");
+        else
+            log_info("Network: Dual-stack (IPv4 + IPv6)");
         if (g_ctx.mode == MODE_REDIRECT)
             log_info("Redirect DNS: %s", g_ctx.redirect_dns ? "on" : "off");
         if (g_ctx.bypass_str) log_info("Bypass: %s", g_ctx.bypass_str);

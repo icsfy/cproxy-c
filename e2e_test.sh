@@ -61,6 +61,17 @@ run_test() {
         exit 1
     fi
 
+    # 1b. IPv4-only (-4) Redirection Test
+    log_info "Testing -4 (IPv4-only) mode..."
+    OUTPUT=$(sudo ./cproxy -4 --mode "$mode" --port $PROXY_PORT -- curl -s -m 5 $TEST_URL)
+    if [[ "$OUTPUT" == *"cproxy works!"* ]]; then
+        log_info "PASS: $mode mode with -4 works correctly"
+    else
+        log_error "FAIL: $mode mode with -4 failed"
+        echo "Output: $OUTPUT"
+        exit 1
+    fi
+
     # 2. DNS + TCP Test
     log_info "Testing DNS + TCP redirection..."
     local dns_flag=""

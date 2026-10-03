@@ -6,6 +6,14 @@ static void get_chain_name(char *buf, size_t len, const char *prefix, pid_t pid,
     snprintf(buf, len, "CP%s_%s_%d", ipv6 ? "6" : "", prefix, pid);
 }
 
+static int has_iptables(void) {
+    static int cache = -1;
+    if (cache == -1) {
+        cache = (run_cmd_silent("iptables --version") == 0);
+    }
+    return cache;
+}
+
 static int has_ip6tables(void) {
     static int cache = -1;
     if (cache == -1) {
@@ -87,23 +95,50 @@ static void get_cgroup_match(char *buf, size_t len, pid_t pid) {
 
 static int setup_redirect(pid_t pid, const char *cg_match) {
     char out4[128], out6[128];
-    get_chain_name(out4, sizeof(out4), "RD_OUT", pid, false);
 
-    CHECK(init_chain("nat", out4, "OUTPUT", "iptables", cg_match));
-    CHECK(apply_bypass_rules(out4, "nat", "iptables"));
+    if (!g_ctx.ipv6_only) {
+        get_chain_name(out4, sizeof(out4), "RD_OUT", pid, false);
+        CHECK(init_chain("nat", out4, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(out4, "nat", "iptables"));
 
-    if (g_ctx.redirect_dns) {
-        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", out4));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", out4));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
-    } else {
-        CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo -j RETURN", out4));
-        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo -j RETURN", out4));
+        if (g_ctx.redirect_dns) {
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", out4));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", out4));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", out4, g_ctx.dns_port));
+        } else {
+            CHECK(run_cmd("iptables -w -t nat -A %s -p udp -o lo -j RETURN", out4));
+            CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -o lo -j RETURN", out4));
+        }
+        CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out4, g_ctx.port));
+    } else if (has_iptables()) {
+        get_chain_name(out4, sizeof(out4), "BLK_OUT", pid, false);
+        CHECK(init_chain("raw", out4, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(out4, "raw", "iptables"));
+        CHECK(run_cmd("iptables -w -t raw -A %s -o lo -j RETURN", out4));
+        CHECK(run_cmd("iptables -w -t raw -A %s -j DROP", out4));
     }
-    CHECK(run_cmd("iptables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out4, g_ctx.port));
 
-    if (has_ip6tables()) {
+    if (g_ctx.ipv6_only) {
+        if (!has_ip6tables()) {
+            log_error("IPv6 support requested (--ipv6-only) but ip6tables not available.");
+            return -1;
+        }
+        get_chain_name(out6, sizeof(out6), "RD_OUT", pid, true);
+        CHECK(init_chain("nat", out6, "OUTPUT", "ip6tables", cg_match));
+        CHECK(apply_bypass_rules(out6, "nat", "ip6tables"));
+
+        if (g_ctx.redirect_dns) {
+            CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp -o lo ! --dport 53 -j RETURN", out6));
+            CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -o lo ! --dport 53 -j RETURN", out6));
+            CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp --dport 53 -j REDIRECT --to-ports %d", out6, g_ctx.dns_port));
+            CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp --dport 53 -j REDIRECT --to-ports %d", out6, g_ctx.dns_port));
+        } else {
+            CHECK(run_cmd("ip6tables -w -t nat -A %s -p udp -o lo -j RETURN", out6));
+            CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -o lo -j RETURN", out6));
+        }
+        CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out6, g_ctx.port));
+    } else if (has_ip6tables()) {
         get_chain_name(out6, sizeof(out6), "RD_OUT", pid, true);
         CHECK(init_chain("raw", out6, "OUTPUT", "ip6tables", cg_match));
         CHECK(apply_bypass_rules(out6, "raw", "ip6tables"));
@@ -178,14 +213,38 @@ static int apply_dns_override_for_family(int family, pid_t pid, const char *cg_m
 static int setup_tproxy(pid_t pid, const char *cg_match, const char *mark_match) {
     g_ctx.tproxy_mark = pid + 10000;
 
-    CHECK(apply_tproxy_rules_for_family(AF_INET, pid, cg_match, mark_match));
-    if (has_ip6tables()) {
-        CHECK(apply_tproxy_rules_for_family(AF_INET6, pid, cg_match, mark_match));
+    if (!g_ctx.ipv6_only) {
+        CHECK(apply_tproxy_rules_for_family(AF_INET, pid, cg_match, mark_match));
+    } else if (has_iptables()) {
+        char blk4[128];
+        get_chain_name(blk4, sizeof(blk4), "BLK_OUT", pid, false);
+        CHECK(init_chain("raw", blk4, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(blk4, "raw", "iptables"));
+        CHECK(run_cmd("iptables -w -t raw -A %s -o lo -j RETURN", blk4));
+        CHECK(run_cmd("iptables -w -t raw -A %s -j DROP", blk4));
+    }
+
+    if (!g_ctx.ipv4_only) {
+        if (has_ip6tables()) {
+            CHECK(apply_tproxy_rules_for_family(AF_INET6, pid, cg_match, mark_match));
+        } else if (g_ctx.ipv6_only) {
+            log_error("IPv6 support requested (--ipv6-only) but ip6tables not available.");
+            return -1;
+        }
+    } else if (has_ip6tables()) {
+        char blk6[128];
+        get_chain_name(blk6, sizeof(blk6), "BLK_OUT", pid, true);
+        CHECK(init_chain("raw", blk6, "OUTPUT", "ip6tables", cg_match));
+        CHECK(apply_bypass_rules(blk6, "raw", "ip6tables"));
+        CHECK(run_cmd("ip6tables -w -t raw -A %s -o lo -j RETURN", blk6));
+        CHECK(run_cmd("ip6tables -w -t raw -A %s -j DROP", blk6));
     }
 
     if (g_ctx.has_override_dns) {
-        CHECK(apply_dns_override_for_family(AF_INET, pid, cg_match));
-        if (has_ip6tables()) {
+        if (!g_ctx.ipv6_only && has_iptables()) {
+            CHECK(apply_dns_override_for_family(AF_INET, pid, cg_match));
+        }
+        if (!g_ctx.ipv4_only && has_ip6tables()) {
             CHECK(apply_dns_override_for_family(AF_INET6, pid, cg_match));
         }
     }
@@ -194,13 +253,15 @@ static int setup_tproxy(pid_t pid, const char *cg_match, const char *mark_match)
 
 static int setup_trace(pid_t pid, const char *cg_match) {
     char out4[128], out6[128];
-    get_chain_name(out4, sizeof(out4), "TR_OUT", pid, false);
 
-    CHECK(init_chain("raw", out4, "OUTPUT", "iptables", cg_match));
-    CHECK(apply_bypass_rules(out4, "raw", "iptables"));
-    CHECK(run_cmd("iptables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out4));
+    if (!g_ctx.ipv6_only && has_iptables()) {
+        get_chain_name(out4, sizeof(out4), "TR_OUT", pid, false);
+        CHECK(init_chain("raw", out4, "OUTPUT", "iptables", cg_match));
+        CHECK(apply_bypass_rules(out4, "raw", "iptables"));
+        CHECK(run_cmd("iptables -w -t raw -A %s -j LOG --log-prefix \"cproxy: \"", out4));
+    }
 
-    if (has_ip6tables()) {
+    if (!g_ctx.ipv4_only && has_ip6tables()) {
         get_chain_name(out6, sizeof(out6), "TR_OUT", pid, true);
         CHECK(init_chain("raw", out6, "OUTPUT", "ip6tables", cg_match));
         CHECK(apply_bypass_rules(out6, "raw", "ip6tables"));
@@ -235,30 +296,42 @@ void cleanup_iptables(void) {
     snprintf(mark_match, sizeof(mark_match), "-m mark --mark 0x%x", pid + 10000);
 
     if (g_ctx.mode == MODE_REDIRECT) {
-        char out4[128], out6[128];
-        get_chain_name(out4, sizeof(out4), "RD_OUT", pid, false);
-        destroy_chain("nat", out4, "OUTPUT", "iptables", cg_match);
+        char out4[128], out6[128], blk4[128];
+        if (has_iptables()) {
+            get_chain_name(out4, sizeof(out4), "RD_OUT", pid, false);
+            destroy_chain("nat", out4, "OUTPUT", "iptables", cg_match);
+            get_chain_name(blk4, sizeof(blk4), "BLK_OUT", pid, false);
+            destroy_chain("raw", blk4, "OUTPUT", "iptables", cg_match);
+        }
+
         if (has_ip6tables()) {
             get_chain_name(out6, sizeof(out6), "RD_OUT", pid, true);
             destroy_chain("raw", out6, "OUTPUT", "ip6tables", cg_match);
+            destroy_chain("nat", out6, "OUTPUT", "ip6tables", cg_match);
         }
     } else if (g_ctx.mode == MODE_TPROXY) {
-        char pre4[128], out4[128], pre6[128], out6[128];
-        get_chain_name(pre4, sizeof(pre4), "TP_PRE", pid, false);
-        get_chain_name(out4, sizeof(out4), "TP_OUT", pid, false);
+        char pre4[128], out4[128], pre6[128], out6[128], blk4[128], blk6[128];
+        if (has_iptables()) {
+            get_chain_name(pre4, sizeof(pre4), "TP_PRE", pid, false);
+            get_chain_name(out4, sizeof(out4), "TP_OUT", pid, false);
+            get_chain_name(blk4, sizeof(blk4), "BLK_OUT", pid, false);
 
-        destroy_chain("mangle", pre4, "PREROUTING", "iptables", mark_match);
-        destroy_chain("mangle", out4, "OUTPUT", "iptables", cg_match);
+            destroy_chain("mangle", pre4, "PREROUTING", "iptables", mark_match);
+            destroy_chain("mangle", out4, "OUTPUT", "iptables", cg_match);
+            destroy_chain("raw", blk4, "OUTPUT", "iptables", cg_match);
+        }
 
         if (has_ip6tables()) {
             get_chain_name(pre6, sizeof(pre6), "TP_PRE", pid, true);
             get_chain_name(out6, sizeof(out6), "TP_OUT", pid, true);
+            get_chain_name(blk6, sizeof(blk6), "BLK_OUT", pid, true);
             destroy_chain("mangle", pre6, "PREROUTING", "ip6tables", mark_match);
             destroy_chain("mangle", out6, "OUTPUT", "ip6tables", cg_match);
+            destroy_chain("raw", blk6, "OUTPUT", "ip6tables", cg_match);
         }
 
         if (g_ctx.has_override_dns) {
-            if (is_valid_ipv4(g_ctx.override_dns)) {
+            if (has_iptables() && is_valid_ipv4(g_ctx.override_dns)) {
                 char dns4[128];
                 get_chain_name(dns4, sizeof(dns4), "TP_DNS", pid, false);
                 destroy_chain("nat", dns4, "OUTPUT", "iptables", cg_match);
@@ -270,14 +343,18 @@ void cleanup_iptables(void) {
             }
         }
 
-        cleanup_tproxy_routing(g_ctx.tproxy_mark, AF_INET);
-        if (has_ip6tables()) {
+        if (!g_ctx.ipv6_only) {
+            cleanup_tproxy_routing(g_ctx.tproxy_mark, AF_INET);
+        }
+        if (!g_ctx.ipv4_only && has_ip6tables()) {
             cleanup_tproxy_routing(g_ctx.tproxy_mark, AF_INET6);
         }
     } else if (g_ctx.mode == MODE_TRACE) {
         char out4[128], out6[128];
-        get_chain_name(out4, sizeof(out4), "TR_OUT", pid, false);
-        destroy_chain("raw", out4, "OUTPUT", "iptables", cg_match);
+        if (has_iptables()) {
+            get_chain_name(out4, sizeof(out4), "TR_OUT", pid, false);
+            destroy_chain("raw", out4, "OUTPUT", "iptables", cg_match);
+        }
         if (has_ip6tables()) {
             get_chain_name(out6, sizeof(out6), "TR_OUT", pid, true);
             destroy_chain("raw", out6, "OUTPUT", "ip6tables", cg_match);
@@ -347,7 +424,9 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
                     strncmp(name, "CP_TP_DNS_", 10) == 0 ||
                     strncmp(name, "CP6_TP_DNS_", 11) == 0 ||
                     strncmp(name, "CP_TR_OUT_", 10) == 0 ||
-                    strncmp(name, "CP6_TR_OUT_", 11) == 0
+                    strncmp(name, "CP6_TR_OUT_", 11) == 0 ||
+                    strncmp(name, "CP_BLK_OUT_", 11) == 0 ||
+                    strncmp(name, "CP6_BLK_OUT_", 12) == 0
                 );
 
                 if (!is_cproxy_chain) continue;
@@ -444,7 +523,9 @@ static void cleanup_stale_ip_rules(void) {
 void cleanup_stale_iptables(void) {
     const char *tables[] = {"nat", "mangle", "raw", "filter"};
     for (int i = 0; i < 4; i++) {
-        cleanup_chains_in_table(tables[i], "iptables");
+        if (has_iptables()) {
+            cleanup_chains_in_table(tables[i], "iptables");
+        }
         if (has_ip6tables()) {
             cleanup_chains_in_table(tables[i], "ip6tables");
         }

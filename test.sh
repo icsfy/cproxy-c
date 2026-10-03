@@ -99,6 +99,65 @@ else
     exit 1
 fi
 
+# 10. IPv4-only and IPv6-only dry run tests
+sudo ./cproxy -D -4 --mode tproxy --port 1080 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] -4/--ipv4-only works in dry run (tproxy)"
+else
+    echo "[FAIL] -4/--ipv4-only failed in dry run (tproxy)"
+    exit 1
+fi
+
+sudo ./cproxy -D -6 --mode tproxy --port 1080 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] -6/--ipv6-only works in dry run (tproxy)"
+else
+    echo "[FAIL] -6/--ipv6-only failed in dry run (tproxy)"
+    exit 1
+fi
+
+sudo ./cproxy -D -4 --mode redirect --port 1080 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] -4/--ipv4-only works in dry run (redirect)"
+else
+    echo "[FAIL] -4/--ipv4-only failed in dry run (redirect)"
+    exit 1
+fi
+
+sudo ./cproxy -D -6 --mode redirect --port 1080 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] -6/--ipv6-only works in dry run (redirect)"
+else
+    echo "[FAIL] -6/--ipv6-only failed in dry run (redirect)"
+    exit 1
+fi
+
+# 11. Conflict between -4 and -6
+./cproxy -4 -6 -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Simultaneous -4 and -6 rejected"
+else
+    echo "[FAIL] Simultaneous -4 and -6 accepted"
+    exit 1
+fi
+
+# 12. DNS override family validation
+./cproxy -4 -o 2001:db8::1 -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] IPv6 DNS override rejected with -4"
+else
+    echo "[FAIL] IPv6 DNS override accepted with -4"
+    exit 1
+fi
+
+./cproxy -6 -o 1.1.1.1 -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] IPv4 DNS override rejected with -6"
+else
+    echo "[FAIL] IPv4 DNS override accepted with -6"
+    exit 1
+fi
+
 # We can't easily test real functionality without being root and potentially messing with system state,
 # but dry-run covers most of the logic.
 

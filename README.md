@@ -20,6 +20,7 @@ Traditional tools like `proxychains` rely on `LD_PRELOAD` to hook socket functio
 
 * **Redirect Mode:** Intercepts outbound TCP and REDIRECTs it to a local port. Drops IPv6 to prevent leaks.
 * **TProxy Mode (Bidirectional-Safe):** Transparently proxies TCP and UDP outbound traffic (IPv4/IPv6) with optional DNS override. Through flow-directional Conntrack marking, inbound connections to server applications running inside the cgroup are preserved and bypassed, allowing you to proxy server processes safely!
+* **IPv4 / IPv6 Single-Stack Modes:** Explicitly enforce single-stack routing with `-4` (`--ipv4-only`) or `-6` (`--ipv6-only`) to avoid dual-stack connection issues when local proxies bind only to `127.0.0.1` or `::1`, automatically blocking the unselected family to prevent IP leaks.
 * **Trace Mode:** Audits and logs application network activity in real time using the `iptables LOG` target.
 * **Process Attaching:** Dynamically intercepts traffic of an already running process via `--pid`.
 * **Namespace Isolation:** Bind mount custom files (`--hosts`, `--resolvconf`) or generic paths (`--mount src:dest`) to safely mock configs without altering the host.
@@ -68,20 +69,30 @@ If your proxy core only supports simple REDIRECT (or you don't need UDP):
 sudo ./cproxy --mode redirect --port 1080 --redirect-dns -- npm install
 ```
 
-### 4. Bypassing LAN / Localhost
+### 4. Single-Stack Proxying (IPv4 Only / IPv6 Only)
+If your local proxy core (such as Shadowsocks or SSH dynamic port forwarding) only listens on `127.0.0.1`, or your upstream network only has IPv4, use `-4` (`--ipv4-only`) to avoid dual-stack `ECONNREFUSED` connection failures and automatically drop IPv6 to prevent leaks:
+```bash
+sudo ./cproxy -4 --mode tproxy --port 1080 -- curl https://api.ipify.org
+```
+Conversely, in pure IPv6 environments or with an IPv6-only listener on `[::1]:1080`, use `-6` (`--ipv6-only`):
+```bash
+sudo ./cproxy -6 --mode tproxy --port 1080 -- curl https://api64.ipify.org
+```
+
+### 5. Bypassing LAN / Localhost
 Prevent routing loops by bypassing your proxy server's IP or local subnets:
 ```bash
 sudo ./cproxy --mode tproxy --port 1080 --bypass "192.168.0.0/16,10.0.0.0/8" -- <command>
 ```
 
-### 5. Attaching to a Running Daemon (e.g., Docker)
+### 6. Attaching to a Running Daemon (e.g., Docker)
 Take over the traffic of a currently running process.
 ```bash
 sudo ./cproxy --mode tproxy --port 1080 --pid $(pidof dockerd)
 ```
 *(Warning: Existing established connections will not be proxied. Only new connections will be routed.)*
 
-### 6. Namespace File Overrides & DNS Isolation
+### 7. Namespace File Overrides & DNS Isolation
 You can isolate the proxied process in a mount namespace and override specific files seamlessly. This is particularly useful for DNS isolation or mocking configurations without root modifications to the host system.
 ```bash
 # Force the application to natively query 8.8.8.8 instead of the host's DNS
@@ -92,7 +103,7 @@ sudo ./cproxy --mode tproxy --resolvconf my_resolv.conf --hosts /dev/null -- cur
 sudo ./cproxy --mode trace --mount /dev/null:/etc/machine-id -- cat /etc/machine-id
 ```
 
-### 7. Cleaning up stale rules
+### 8. Cleaning up stale rules
 If `cproxy-c` crashes unexpectedly, clean up orphaned iptables rules and cgroups:
 ```bash
 sudo ./cproxy --clean

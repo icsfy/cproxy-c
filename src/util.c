@@ -153,7 +153,7 @@ int parse_bypass_rules(Context *ctx) {
 }
 
 int check_dependencies(void) {
-    if (run_cmd_silent("iptables --version") != 0) {
+    if (!g_ctx.ipv6_only && run_cmd_silent("iptables --version") != 0) {
         log_error("'iptables' command not found. Please install it.");
         return -1;
     }
@@ -162,8 +162,15 @@ int check_dependencies(void) {
         return -1;
     }
 
-    if (run_cmd_silent("ip6tables --version") != 0) {
-        log_warn("'ip6tables' not found. IPv6 support will be disabled.");
+    if (g_ctx.ipv6_only) {
+        if (run_cmd_silent("ip6tables --version") != 0) {
+            log_error("'ip6tables' command not found, but --ipv6-only was requested.");
+            return -1;
+        }
+    } else if (!g_ctx.ipv4_only) {
+        if (run_cmd_silent("ip6tables --version") != 0) {
+            log_warn("'ip6tables' not found. IPv6 support will be disabled.");
+        }
     }
 
     return 0;
