@@ -37,28 +37,28 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
             case 'n': snprintf(mode_str, sizeof(mode_str), "direct"); break;
             case 'v': printf("cproxy version %s\n", CPROXY_VERSION); exit(0);
             case 'h':
-                fprintf(stderr, "Usage: %s [options] -- <command...>\n", argv[0]);
-                fprintf(stderr, "Options:\n");
-                fprintf(stderr, "  -p, --port <port>         Proxy port (default: 1080)\n");
-                fprintf(stderr, "  -l, --dns-port <port>     DNS proxy port (default: same as --port)\n");
-                fprintf(stderr, "  -m, --mode <mode>         Mode: redirect (default), tproxy, trace, direct\n");
-                fprintf(stderr, "  -n, --no-proxy            Do not proxy traffic (alias for --mode direct)\n");
-                fprintf(stderr, "  -4, --ipv4-only           Enable IPv4 only (drop IPv6 to prevent leaks)\n");
-                fprintf(stderr, "  -6, --ipv6-only           Enable IPv6 only (drop IPv4 to prevent leaks)\n");
-                fprintf(stderr, "  -d, --redirect-dns        Redirect DNS in redirect mode\n");
-                fprintf(stderr, "  -o, --override-dns <ip>   Override DNS IP (DNAT/TProxy)\n");
-                fprintf(stderr, "  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
-                fprintf(stderr, "  -i, --pid <pid>           Attach to an existing process\n");
-                fprintf(stderr, "  -H, --hosts <file>        Bind mount a custom file over /etc/hosts\n");
-                fprintf(stderr, "  -R, --resolvconf <file>   Bind mount a custom file over /etc/resolv.conf\n");
-                fprintf(stderr, "  -M, --mount <src:dst>     Bind mount a generic file or directory\n");
-                fprintf(stderr, "  -u, --user <username>     Run target process as a specific user\n");
-                fprintf(stderr, "  -e, --env <KEY=VALUE>     Inject an environment variable into the process\n");
-                fprintf(stderr, "  -V, --verbose             Show detailed debug information\n");
-                fprintf(stderr, "  -D, --dry-run             Show commands without executing them\n");
-                fprintf(stderr, "  -C, --clean               Cleanup stale iptables rules and cgroups\n");
-                fprintf(stderr, "  -h, --help                Show this help message\n");
-                fprintf(stderr, "  -v, --version             Show version information\n");
+                printf("Usage: %s [options] -- <command...>\n", argv[0]);
+                printf("Options:\n");
+                printf("  -p, --port <port>         Proxy port (default: 1080)\n");
+                printf("  -l, --dns-port <port>     DNS proxy port (default: same as --port)\n");
+                printf("  -m, --mode <mode>         Mode: redirect (default), tproxy, trace, direct\n");
+                printf("  -n, --no-proxy            Do not proxy traffic (alias for --mode direct)\n");
+                printf("  -4, --ipv4-only           Enable IPv4 only (drop IPv6 to prevent leaks)\n");
+                printf("  -6, --ipv6-only           Enable IPv6 only (drop IPv4 to prevent leaks)\n");
+                printf("  -d, --redirect-dns        Redirect DNS in redirect mode\n");
+                printf("  -o, --override-dns <ip>   Override DNS IP (DNAT/TProxy)\n");
+                printf("  -b, --bypass <ips>        Comma-separated list of IPs/CIDRs to bypass\n");
+                printf("  -i, --pid <pid>           Attach to an existing process\n");
+                printf("  -H, --hosts <file>        Bind mount a custom file over /etc/hosts\n");
+                printf("  -R, --resolvconf <file>   Bind mount a custom file over /etc/resolv.conf\n");
+                printf("  -M, --mount <src:dst>     Bind mount a generic file or directory\n");
+                printf("  -u, --user <username>     Run target process as a specific user\n");
+                printf("  -e, --env <KEY=VALUE>     Inject an environment variable into the process\n");
+                printf("  -V, --verbose             Show detailed debug information\n");
+                printf("  -D, --dry-run             Show commands without executing them\n");
+                printf("  -C, --clean               Cleanup stale iptables rules and cgroups\n");
+                printf("  -h, --help                Show this help message\n");
+                printf("  -v, --version             Show version information\n");
                 exit(0);
             case 'p': {
                 char *endptr;
@@ -147,7 +147,17 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                 break;
             case 'e':
                 if (ctx->env_count < 16) {
-                    ctx->env_vars[ctx->env_count++] = strdup(optarg);
+                    char *eq = strchr(optarg, '=');
+                    if (!eq || eq == optarg) {
+                        fprintf(stderr, "Error: Invalid --env format '%s'. Expected KEY=VALUE\n", optarg);
+                        return -1;
+                    }
+                    char *val = strdup(optarg);
+                    if (!val) {
+                        perror("strdup failed");
+                        return -1;
+                    }
+                    ctx->env_vars[ctx->env_count++] = val;
                 } else {
                     fprintf(stderr, "Error: Too many --env arguments (max 16)\n");
                     return -1;
@@ -219,6 +229,11 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
 
     if (ctx->ipv6_only && ctx->has_override_dns && is_valid_ipv4(ctx->override_dns)) {
         fprintf(stderr, "Error: --override-dns cannot be an IPv4 address when --ipv6-only is specified.\n");
+        return -1;
+    }
+
+    if (ctx->redirect_dns && ctx->has_override_dns) {
+        fprintf(stderr, "Error: Cannot specify both --redirect-dns and --override-dns.\n");
         return -1;
     }
 

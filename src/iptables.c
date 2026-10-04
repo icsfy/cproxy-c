@@ -33,7 +33,11 @@ static int setup_tproxy_routing(int mark, int family) {
     log_debug("Setting up TProxy routing for %s (mark: 0x%x)",
               (family == AF_INET6) ? "IPv6" : "IPv4", mark);
 
-    run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);
+    if (!g_ctx.dry_run) {
+        while (run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark) == 0);
+    } else {
+        run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);
+    }
     run_cmd_silent("%s route delete local %s dev lo table %d", ip_cmd, any_addr, mark);
 
     CHECK(run_cmd("%s rule add fwmark 0x%x table %d", ip_cmd, mark, mark));
@@ -44,12 +48,20 @@ static int setup_tproxy_routing(int mark, int family) {
 static void cleanup_tproxy_routing(int mark, int family) {
     const char *ip_cmd = (family == AF_INET6) ? "ip -6" : "ip";
     if (mark == 0) return;
-    run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);
+    if (!g_ctx.dry_run) {
+        while (run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark) == 0);
+    } else {
+        run_cmd_silent("%s rule delete fwmark 0x%x table %d", ip_cmd, mark, mark);
+    }
     run_cmd_silent("%s route flush table %d", ip_cmd, mark);
 }
 
 int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match) {
-    run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain);
+    if (!g_ctx.dry_run) {
+        while (run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain) == 0);
+    } else {
+        run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain);
+    }
     run_cmd_silent("%s -w -t %s -F %s", iptables_cmd, table, chain);
     run_cmd_silent("%s -w -t %s -X %s", iptables_cmd, table, chain);
 
@@ -59,7 +71,11 @@ int init_chain(const char *table, const char *chain, const char *parent, const c
 }
 
 static void destroy_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match) {
-    run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain);
+    if (!g_ctx.dry_run) {
+        while (run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain) == 0);
+    } else {
+        run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain);
+    }
     run_cmd_silent("%s -w -t %s -F %s", iptables_cmd, table, chain);
     run_cmd_silent("%s -w -t %s -X %s", iptables_cmd, table, chain);
 }
@@ -92,6 +108,8 @@ static void get_cgroup_match(char *buf, size_t len, pid_t pid) {
         snprintf(buf, len, "-m cgroup --cgroup 0x%08x", classid);
     }
 }
+
+static int apply_dns_override_for_family(int family, pid_t pid, const char *cg_match);
 
 static int setup_redirect(pid_t pid, const char *cg_match) {
     char out4[128], out6[128];
@@ -139,11 +157,20 @@ static int setup_redirect(pid_t pid, const char *cg_match) {
         }
         CHECK(run_cmd("ip6tables -w -t nat -A %s -p tcp -j REDIRECT --to-ports %d", out6, g_ctx.port));
     } else if (has_ip6tables()) {
-        get_chain_name(out6, sizeof(out6), "RD_OUT", pid, true);
+        get_chain_name(out6, sizeof(out6), "BLK_OUT", pid, true);
         CHECK(init_chain("raw", out6, "OUTPUT", "ip6tables", cg_match));
         CHECK(apply_bypass_rules(out6, "raw", "ip6tables"));
         CHECK(run_cmd("ip6tables -w -t raw -A %s -o lo -j RETURN", out6));
         CHECK(run_cmd("ip6tables -w -t raw -A %s -j DROP", out6));
+    }
+
+    if (g_ctx.has_override_dns) {
+        if (!g_ctx.ipv6_only && has_iptables()) {
+            CHECK(apply_dns_override_for_family(AF_INET, pid, cg_match));
+        }
+        if (!g_ctx.ipv4_only && has_ip6tables()) {
+            CHECK(apply_dns_override_for_family(AF_INET6, pid, cg_match));
+        }
     }
     return 0;
 }
@@ -331,7 +358,7 @@ void cleanup_iptables(void) {
     snprintf(mark_match, sizeof(mark_match), "-m mark --mark 0x%x", pid + 10000);
 
     if (g_ctx.mode == MODE_REDIRECT) {
-        char out4[128], out6[128], blk4[128];
+        char out4[128], out6[128], blk4[128], blk6[128];
         if (has_iptables()) {
             get_chain_name(out4, sizeof(out4), "RD_OUT", pid, false);
             destroy_chain("nat", out4, "OUTPUT", "iptables", cg_match);
@@ -343,6 +370,21 @@ void cleanup_iptables(void) {
             get_chain_name(out6, sizeof(out6), "RD_OUT", pid, true);
             destroy_chain("raw", out6, "OUTPUT", "ip6tables", cg_match);
             destroy_chain("nat", out6, "OUTPUT", "ip6tables", cg_match);
+            get_chain_name(blk6, sizeof(blk6), "BLK_OUT", pid, true);
+            destroy_chain("raw", blk6, "OUTPUT", "ip6tables", cg_match);
+        }
+
+        if (g_ctx.has_override_dns) {
+            if (has_iptables() && is_valid_ipv4(g_ctx.override_dns)) {
+                char dns4[128];
+                get_chain_name(dns4, sizeof(dns4), "TP_DNS", pid, false);
+                destroy_chain("nat", dns4, "OUTPUT", "iptables", cg_match);
+            }
+            if (has_ip6tables() && is_valid_ipv6(g_ctx.override_dns)) {
+                char dns6[128];
+                get_chain_name(dns6, sizeof(dns6), "TP_DNS", pid, true);
+                destroy_chain("nat", dns6, "OUTPUT", "ip6tables", cg_match);
+            }
         }
     } else if (g_ctx.mode == MODE_TPROXY) {
         char pre4[128], out4[128], pre6[128], out6[128], blk4[128], blk6[128];
@@ -528,7 +570,7 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
                 char prefix[128];
                 snprintf(prefix, sizeof(prefix), "-A %s ", stale_chains[i]);
                 if (strncmp(all_rules[j], prefix, strlen(prefix)) != 0) {
-                    run_cmd_silent("%s -t %s -D %s", iptables_cmd, table, all_rules[j] + 3);
+                    run_cmd_silent("%s -w -t %s -D %s", iptables_cmd, table, all_rules[j] + 3);
                 }
             }
         }
@@ -536,8 +578,9 @@ static void cleanup_chains_in_table(const char *table, const char *iptables_cmd)
 
     // Final pass: Flush and delete stale chains
     for (int i = 0; i < stale_count; i++) {
-        run_cmd_silent("%s -t %s -F %s", iptables_cmd, table, stale_chains[i]);
-        run_cmd_silent("%s -t %s -X %s", iptables_cmd, table, stale_chains[i]);
+        run_cmd_silent("%s -w -t %s -F %s", iptables_cmd, table, stale_chains[i]);
+        run_cmd_silent("%s -w -t %s -X %s", iptables_cmd, table, stale_chains[i]);
+        log_info("Removed stale chain: %s (table: %s)", stale_chains[i], table);
         free(stale_chains[i]);
     }
 
@@ -569,8 +612,8 @@ static void cleanup_stale_ip_rules(void) {
                         pid_t pid = (pid_t)(mark - 10000);
                         if (is_pid_alive(pid)) continue;
 
-                        log_debug("Cleaning up stale ip rule for mark 0x%x", mark);
-                        run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table);
+                        log_info("Removed stale ip rule for mark 0x%x (table %u)", mark, table);
+                        while (run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table) == 0);
                         run_cmd_silent("%s route flush table %u", cmds[i], table);
                     }
                 }

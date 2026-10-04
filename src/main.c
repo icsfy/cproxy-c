@@ -207,9 +207,16 @@ int main(int argc, char *argv[]) {
     pid_t child_pid = 0;
 
     if (!is_attaching) {
-        if (pipe(pipefd) == -1) {
-            perror("pipe failed");
-            return 1;
+        if (pipe2(pipefd, O_CLOEXEC) == -1) {
+            if (errno == ENOSYS) {
+                if (pipe(pipefd) == -1) {
+                    perror("pipe failed");
+                    return 1;
+                }
+            } else {
+                perror("pipe failed");
+                return 1;
+            }
         }
         child_pid = fork();
         if (child_pid < 0) {
@@ -296,7 +303,14 @@ int main(int argc, char *argv[]) {
     g_ctx.target_pid = process_to_proxy; // Ensure cleanup knows which PID to use
 
     if (setup_cgroup(process_to_proxy) != 0 || setup_iptables(process_to_proxy) != 0) {
-        if (!is_attaching) close(pipefd[1]);
+        if (!is_attaching) {
+            close(pipefd[1]);
+            if (child_pid > 0) {
+                int status;
+                kill(child_pid, SIGKILL);
+                while (waitpid(child_pid, &status, 0) == -1 && errno == EINTR);
+            }
+        }
         return 1;
     }
 

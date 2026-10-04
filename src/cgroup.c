@@ -230,7 +230,11 @@ void cleanup_cgroup(void) {
         move_pids_to_parent(g_ctx.cgroup_path, parent_path);
     }
 
-    if (rmdir(g_ctx.cgroup_path) != 0 && errno != ENOENT) {
+    int rmdir_retries = 10;
+    while (rmdir(g_ctx.cgroup_path) != 0 && errno == EBUSY && rmdir_retries-- > 0) {
+        usleep(20000);
+    }
+    if (access(g_ctx.cgroup_path, F_OK) == 0) {
         if (g_ctx.verbose) log_warn("rmdir '%s' failed: %s", g_ctx.cgroup_path, strerror(errno));
     }
     g_ctx.cgroup_created = 0;
@@ -273,7 +277,37 @@ static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {
 
                 move_pids_to_parent(path, parent_path);
 
-                if (rmdir(path) == 0) {
+                if (rmdir(path) != 0 && errno != ENOENT) {
+                    // If rmdir failed (likely due to lingering orphaned processes),
+                    // attempt to kill any remaining processes in this stale cgroup
+                    char kill_file[PATH_MAX + 64];
+                    snprintf(kill_file, sizeof(kill_file), "%s/cgroup.kill", path);
+                    FILE *kf = fopen(kill_file, "w");
+                    if (kf) {
+                        fprintf(kf, "1\n");
+                        fclose(kf);
+                    } else {
+                        char procs_file[PATH_MAX + 64];
+                        snprintf(procs_file, sizeof(procs_file), "%s/cgroup.procs", path);
+                        FILE *pf = fopen(procs_file, "r");
+                        if (!pf) {
+                            snprintf(procs_file, sizeof(procs_file), "%s/tasks", path);
+                            pf = fopen(procs_file, "r");
+                        }
+                        if (pf) {
+                            char pbuf[32];
+                            while (fgets(pbuf, sizeof(pbuf), pf)) {
+                                pid_t leftover = (pid_t)strtol(pbuf, NULL, 10);
+                                if (leftover > 0 && is_pid_alive(leftover)) kill(leftover, SIGKILL);
+                            }
+                            fclose(pf);
+                        }
+                    }
+                    usleep(30000);
+                    rmdir(path);
+                }
+
+                if (access(path, F_OK) != 0) {
                     log_info("Removed stale cgroup: %s", path);
                 }
             }

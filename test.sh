@@ -208,4 +208,48 @@ else
     exit 1
 fi
 
+# 15. Invalid --env format rejection
+./cproxy -e INVALID_FORMAT -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Invalid --env format without '=' rejected"
+else
+    echo "[FAIL] Invalid --env format without '=' was accepted"
+    exit 1
+fi
+
+./cproxy -e =EMPTY_KEY -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Invalid --env format with empty key rejected"
+else
+    echo "[FAIL] Invalid --env format with empty key was accepted"
+    exit 1
+fi
+
+# 16. Conflict between --redirect-dns and --override-dns
+./cproxy -d -o 1.1.1.1 -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Simultaneous --redirect-dns and --override-dns rejected"
+else
+    echo "[FAIL] Simultaneous --redirect-dns and --override-dns was accepted"
+    exit 1
+fi
+
+# 17. Redirect mode with --override-dns in dry run
+sudo ./cproxy -D --mode redirect --override-dns 1.1.1.1 -- ls > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "[PASS] --mode redirect with --override-dns works in dry run"
+else
+    echo "[FAIL] --mode redirect with --override-dns failed in dry run"
+    exit 1
+fi
+
+# 18. --help writes to stdout (not stderr)
+HELP_STDERR=$(./cproxy --help 2>&1 > /dev/null)
+if [ -z "$HELP_STDERR" ]; then
+    echo "[PASS] --help writes cleanly to stdout"
+else
+    echo "[FAIL] --help wrote to stderr: $HELP_STDERR"
+    exit 1
+fi
+
 echo "All basic tests passed!"

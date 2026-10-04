@@ -40,7 +40,30 @@ int is_valid_ipv6(const char *ip) {
 
 int is_pid_alive(pid_t pid) {
     if (pid <= 0) return 0;
-    return kill(pid, 0) == 0 || errno != ESRCH;
+    if (kill(pid, 0) != 0) {
+        return (errno != ESRCH);
+    }
+    // Process exists, but check if it's already a terminated zombie (State 'Z' or 'X')
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return (errno != ENOENT);
+    }
+    char buf[256];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n > 0) {
+        buf[n] = '\0';
+        char *last_paren = strrchr(buf, ')');
+        if (last_paren && *(last_paren + 1) == ' ') {
+            char state = *(last_paren + 2);
+            if (state == 'Z' || state == 'X') {
+                return 0; // Terminated zombie or dead
+            }
+        }
+    }
+    return 1;
 }
 
 int is_valid_bypass_str(const char* str) {

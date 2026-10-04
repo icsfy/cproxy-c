@@ -69,17 +69,16 @@ int run_cmd_v(const char *fmt, va_list args, int silent) {
         sigemptyset(&empty);
         sigprocmask(SIG_SETMASK, &empty, NULL);
 
-        // If cproxy is setuid root, bash will drop privileges back to the real UID unless
-        // we explicitly set the real UID to match the effective UID (0).
-        if (setuid(geteuid()) != 0) {
-            perror("setuid failed in run_cmd");
-        }
         if (setgid(getegid()) != 0) {
             perror("setgid failed in run_cmd");
+        }
+        if (setuid(geteuid()) != 0) {
+            perror("setuid failed in run_cmd");
         }
 
         clearenv();
         setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+        setenv("LC_ALL", "C", 1);
 
         if (silent && !g_ctx.verbose) {
             int devnull = open("/dev/null", O_WRONLY);
@@ -149,7 +148,13 @@ int run_cmd_silent(const char *fmt, ...) {
 
 FILE *safe_popen(const char *cmd, pid_t *pid_out) {
     int fd[2];
-    if (pipe(fd) < 0) return NULL;
+    if (pipe2(fd, O_CLOEXEC) < 0) {
+        if (errno == ENOSYS) {
+            if (pipe(fd) < 0) return NULL;
+        } else {
+            return NULL;
+        }
+    }
     pid_t pid = fork();
     if (pid < 0) {
         close(fd[0]);
@@ -165,13 +170,14 @@ FILE *safe_popen(const char *cmd, pid_t *pid_out) {
         dup2(fd[1], STDOUT_FILENO);
         close(fd[1]);
 
-        if (setuid(geteuid()) != 0) perror("setuid failed in safe_popen");
         if (setgid(getegid()) != 0) perror("setgid failed in safe_popen");
+        if (setuid(geteuid()) != 0) perror("setuid failed in safe_popen");
 
         clearenv();
         setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+        setenv("LC_ALL", "C", 1);
 
-        char cmd_buf[1024];
+        char cmd_buf[4096];
         snprintf(cmd_buf, sizeof(cmd_buf), "%s", cmd);
         exec_cmd(cmd_buf);
         _exit(127);
