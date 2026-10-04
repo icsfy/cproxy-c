@@ -368,7 +368,6 @@ void cleanup_iptables(void) {
 
         if (has_ip6tables()) {
             get_chain_name(out6, sizeof(out6), "RD_OUT", pid, true);
-            destroy_chain("raw", out6, "OUTPUT", "ip6tables", cg_match);
             destroy_chain("nat", out6, "OUTPUT", "ip6tables", cg_match);
             get_chain_name(blk6, sizeof(blk6), "BLK_OUT", pid, true);
             destroy_chain("raw", blk6, "OUTPUT", "ip6tables", cg_match);

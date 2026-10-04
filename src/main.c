@@ -183,6 +183,8 @@ int main(int argc, char *argv[]) {
             log_info("Network: IPv4 only");
         else if (g_ctx.ipv6_only)
             log_info("Network: IPv6 only");
+        else if (g_ctx.mode == MODE_REDIRECT)
+            log_info("Network: IPv4 only (IPv6 dropped to prevent leaks)");
         else
             log_info("Network: Dual-stack (IPv4 + IPv6)");
         if (g_ctx.mode == MODE_REDIRECT)
@@ -200,7 +202,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (!g_ctx.has_override_dns && (g_ctx.mode == MODE_TPROXY || g_ctx.redirect_dns)) {
+    if (!g_ctx.has_override_dns && g_ctx.mode == MODE_TPROXY) {
         log_warn("No --override-dns provided. DNS queries to local stub resolvers (e.g., 127.0.0.53) will bypass the proxy and LEAK.");
     }
     int pipefd[2] = {-1, -1};
@@ -213,6 +215,8 @@ int main(int argc, char *argv[]) {
                     perror("pipe failed");
                     return 1;
                 }
+                fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
+                fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
             } else {
                 perror("pipe failed");
                 return 1;
@@ -321,6 +325,7 @@ int main(int argc, char *argv[]) {
             printf("Proxying PID %d. Press Ctrl+C to stop...\n", g_ctx.target_pid);
         }
         wait_for_process(g_ctx.target_pid);
+        return g_keep_running ? 0 : 130;
     } else {
         ssize_t nwritten;
         while ((nwritten = write(pipefd[1], "A", 1)) == -1 && errno == EINTR);

@@ -30,7 +30,7 @@ static int add_pid_to_cgroup(pid_t pid, const char *path) {
     int len = snprintf(buf, sizeof(buf), "%d\n", pid);
     ssize_t written;
     while ((written = write(fd, buf, len)) == -1 && errno == EINTR);
-    int saved_errno = (written == len) ? 0 : errno;
+    int saved_errno = (written == len) ? 0 : (errno != 0 ? errno : EIO);
     int close_res = close(fd);
     if (saved_errno != 0) {
         errno = saved_errno;
@@ -169,7 +169,8 @@ int is_cgroup_empty(void) {
     char buf[32];
     int empty = 1;
     while (fgets(buf, sizeof(buf), f)) {
-        if (strtol(buf, NULL, 10) > 0) {
+        pid_t pid = (pid_t)strtol(buf, NULL, 10);
+        if (pid > 0 && is_pid_alive(pid)) {
             empty = 0;
             break;
         }
@@ -304,6 +305,7 @@ static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {
                         }
                     }
                     usleep(30000);
+                    move_pids_to_parent(path, parent_path);
                     rmdir(path);
                 }
 

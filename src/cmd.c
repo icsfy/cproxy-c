@@ -5,7 +5,7 @@ static void exec_cmd(char *cmd_buf) {
     int argc_cmd = 0;
     char *p = cmd_buf;
     while (*p && argc_cmd < 127) {
-        while (*p == ' ') p++;
+        while (*p == ' ' || *p == '\t') p++;
         if (!*p) break;
 
         if (*p == '\'') {
@@ -26,15 +26,10 @@ static void exec_cmd(char *cmd_buf) {
             }
         } else {
             argv_cmd[argc_cmd++] = p;
-            while (*p && *p != ' ' && *p != '\'' && *p != '"') p++;
-            if (*p == ' ' || *p == '\'' || *p == '"') {
-                char next = *p;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\'' && *p != '"') p++;
+            if (*p == ' ' || *p == '\t' || *p == '\'' || *p == '"') {
                 *p = '\0';
                 p++;
-                if (next != ' ') {
-                    // This handles cases where quotes are attached to words,
-                    // but in cproxy we separate arguments by spaces.
-                }
             }
         }
     }
@@ -151,6 +146,8 @@ FILE *safe_popen(const char *cmd, pid_t *pid_out) {
     if (pipe2(fd, O_CLOEXEC) < 0) {
         if (errno == ENOSYS) {
             if (pipe(fd) < 0) return NULL;
+            fcntl(fd[0], F_SETFD, FD_CLOEXEC);
+            fcntl(fd[1], F_SETFD, FD_CLOEXEC);
         } else {
             return NULL;
         }

@@ -117,6 +117,10 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                     return -1;
                 }
                 char mount_arg[PATH_MAX * 2 + 2];
+                if (strlen(optarg) >= sizeof(mount_arg)) {
+                    fprintf(stderr, "Error: --mount argument too long\n");
+                    return -1;
+                }
                 snprintf(mount_arg, sizeof(mount_arg), "%s", optarg);
                 char *colon = strchr(mount_arg, ':');
                 if (!colon) {

@@ -109,9 +109,9 @@ int wait_for_process(pid_t pid) {
         }
         close(pidfd);
     } else {
-        log_debug("Falling back to kill(0) polling for PID %d", pid);
+        log_debug("Falling back to polling for PID %d", pid);
         while (g_keep_running) {
-            if (kill(pid, 0) == -1 && errno == ESRCH) break;
+            if (!is_pid_alive(pid)) break;
             usleep(100000);
         }
     }

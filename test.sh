@@ -252,4 +252,32 @@ else
     exit 1
 fi
 
+# 19. --redirect-dns does not emit false --override-dns warning
+REDIR_DNS_WARN=$(sudo ./cproxy -D --mode redirect --redirect-dns --port 1080 -- ls 2>&1)
+if echo "$REDIR_DNS_WARN" | grep -q "No --override-dns provided"; then
+    echo "[FAIL] --redirect-dns emitted false --override-dns warning"
+    exit 1
+else
+    echo "[PASS] --redirect-dns does not emit false --override-dns warning"
+fi
+
+# 20. Accurate network mode logging in redirect mode
+REDIR_NET_LOG=$(sudo ./cproxy -D -V --mode redirect --port 1080 -- ls 2>&1)
+if echo "$REDIR_NET_LOG" | grep -q "Network: IPv4 only (IPv6 dropped to prevent leaks)"; then
+    echo "[PASS] Accurate network mode logged in redirect mode"
+else
+    echo "[FAIL] Inaccurate network mode logged in redirect mode: $REDIR_NET_LOG"
+    exit 1
+fi
+
+# 21. Excessively long --mount string rejected
+LONG_MOUNT=$(printf 'a%.0s' {1..9000})
+./cproxy -M "$LONG_MOUNT:$LONG_MOUNT" -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Excessively long --mount argument rejected"
+else
+    echo "[FAIL] Excessively long --mount argument accepted"
+    exit 1
+fi
+
 echo "All basic tests passed!"
