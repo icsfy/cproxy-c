@@ -3,15 +3,16 @@
 void log_msg(LogLevel level, const char *fmt, ...) {
     if (level == LOG_LEVEL_DEBUG && !g_ctx.verbose && !g_ctx.dry_run) return;
 
-    FILE *out = (level == LOG_LEVEL_ERROR || level == LOG_LEVEL_WARN) ? stderr : stdout;
-    const char *prefix = "";
+    const char *prefix;
     switch (level) {
         case LOG_LEVEL_DEBUG: prefix = "[DEBUG] "; break;
         case LOG_LEVEL_INFO:  prefix = "[INFO]  "; break;
         case LOG_LEVEL_WARN:  prefix = "[WARN]  "; break;
         case LOG_LEVEL_ERROR: prefix = "[ERROR] "; break;
+        default:              prefix = "[LOG]   "; break;
     }
 
+    FILE *out = (level == LOG_LEVEL_ERROR || level == LOG_LEVEL_WARN) ? stderr : stdout;
     fprintf(out, "%s", prefix);
     va_list args;
     va_start(args, fmt);
@@ -21,9 +22,9 @@ void log_msg(LogLevel level, const char *fmt, ...) {
 }
 
 double get_time_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (double)tv.tv_sec * 1000.0 + (double)tv.tv_usec / 1000.0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
 }
 
 int is_valid_ipv4(const char *ip) {

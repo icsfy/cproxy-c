@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <pwd.h>
 #include <grp.h>
 #include <signal.h>
@@ -25,6 +26,13 @@
 enum Mode { MODE_REDIRECT, MODE_TPROXY, MODE_TRACE, MODE_DIRECT };
 
 #define MAX_MOUNTS 16
+#define MAX_ENV_VARS 16
+
+#if defined(__GNUC__) || defined(__clang__)
+#define PRINTF_FORMAT(fmt_idx, args_idx) __attribute__((format(printf, fmt_idx, args_idx)))
+#else
+#define PRINTF_FORMAT(fmt_idx, args_idx)
+#endif
 
 typedef struct {
     char src[PATH_MAX];
@@ -60,7 +68,7 @@ typedef struct {
     char custom_resolvconf[PATH_MAX];
     bool has_custom_resolvconf;
     char run_as_user[64];
-    char *env_vars[16];
+    char *env_vars[MAX_ENV_VARS];
     int env_count;
     CustomMount mounts[MAX_MOUNTS];
     int mount_count;
@@ -79,7 +87,7 @@ typedef enum {
     LOG_LEVEL_ERROR
 } LogLevel;
 
-void log_msg(LogLevel level, const char *fmt, ...);
+void log_msg(LogLevel level, const char *fmt, ...) PRINTF_FORMAT(2, 3);
 #define log_debug(...) log_msg(LOG_LEVEL_DEBUG, __VA_ARGS__)
 #define log_info(...)  log_msg(LOG_LEVEL_INFO, __VA_ARGS__)
 #define log_warn(...)  log_msg(LOG_LEVEL_WARN, __VA_ARGS__)
@@ -87,8 +95,8 @@ void log_msg(LogLevel level, const char *fmt, ...);
 
 double get_time_ms(void);
 int run_cmd_v(const char *fmt, va_list args, int silent);
-int run_cmd(const char *fmt, ...);
-int run_cmd_silent(const char *fmt, ...);
+int run_cmd(const char *fmt, ...) PRINTF_FORMAT(1, 2);
+int run_cmd_silent(const char *fmt, ...) PRINTF_FORMAT(1, 2);
 FILE *safe_popen(const char *cmd, pid_t *pid_out);
 void safe_pclose(FILE *fp, pid_t pid);
 int is_valid_ipv4(const char *ip);
@@ -107,8 +115,6 @@ void cleanup_cgroup(void);
 void cleanup_stale_cgroups(void);
 
 // Iptables
-int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match);
-int apply_bypass_rules(const char* chain, const char* table, const char* iptables_cmd);
 int setup_iptables(pid_t pid);
 void cleanup_iptables(void);
 void cleanup_stale_iptables(void);

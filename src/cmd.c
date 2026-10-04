@@ -33,6 +33,11 @@ static void exec_cmd(char *cmd_buf) {
             }
         }
     }
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '\0') {
+        fprintf(stderr, "Error: Command exceeds maximum argument limit (127)\n");
+        _exit(127);
+    }
     argv_cmd[argc_cmd] = NULL;
 
     if (argc_cmd > 0) {
@@ -175,7 +180,10 @@ FILE *safe_popen(const char *cmd, pid_t *pid_out) {
         setenv("LC_ALL", "C", 1);
 
         char cmd_buf[4096];
-        snprintf(cmd_buf, sizeof(cmd_buf), "%s", cmd);
+        if (snprintf(cmd_buf, sizeof(cmd_buf), "%s", cmd) >= (int)sizeof(cmd_buf)) {
+            fprintf(stderr, "Error: Command exceeds buffer size in safe_popen\n");
+            _exit(127);
+        }
         exec_cmd(cmd_buf);
         _exit(127);
     }

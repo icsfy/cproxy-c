@@ -147,10 +147,14 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                     fprintf(stderr, "Error: --user cannot be used when running cproxy as a setuid binary.\n");
                     return -1;
                 }
+                if (strlen(optarg) >= sizeof(ctx->run_as_user)) {
+                    fprintf(stderr, "Error: Username too long: %s\n", optarg);
+                    return -1;
+                }
                 snprintf(ctx->run_as_user, sizeof(ctx->run_as_user), "%s", optarg);
                 break;
             case 'e':
-                if (ctx->env_count < 16) {
+                if (ctx->env_count < MAX_ENV_VARS) {
                     char *eq = strchr(optarg, '=');
                     if (!eq || eq == optarg) {
                         fprintf(stderr, "Error: Invalid --env format '%s'. Expected KEY=VALUE\n", optarg);
@@ -163,7 +167,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
                     }
                     ctx->env_vars[ctx->env_count++] = val;
                 } else {
-                    fprintf(stderr, "Error: Too many --env arguments (max 16)\n");
+                    fprintf(stderr, "Error: Too many --env arguments (max %d)\n", MAX_ENV_VARS);
                     return -1;
                 }
                 break;
@@ -179,7 +183,7 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
             case 'i': {
                 char *endptr;
                 long p = strtol(optarg, &endptr, 10);
-                if (*optarg == '\0' || *endptr != '\0' || p <= 0) {
+                if (*optarg == '\0' || *endptr != '\0' || p <= 0 || p > 4194304) {
                     fprintf(stderr, "Error: Invalid PID: %s\n", optarg);
                     return -1;
                 }
@@ -255,14 +259,21 @@ int parse_args(Context *ctx, int argc, char *argv[]) {
         return -1;
     }
 
-    if ((ctx->has_custom_hosts || ctx->has_custom_resolvconf || ctx->mount_count > 0) && ctx->target_pid > 0) {
-        fprintf(stderr, "Error: --hosts, --resolvconf, and --mount cannot be used with --pid (already running processes).\n");
+    if ((ctx->has_custom_hosts || ctx->has_custom_resolvconf || ctx->mount_count > 0 ||
+         ctx->env_count > 0 || ctx->run_as_user[0] != '\0') && ctx->target_pid > 0) {
+        fprintf(stderr, "Error: --hosts, --resolvconf, --mount, --env, and --user cannot be used with --pid (already running processes).\n");
         return -1;
     }
 
     if (!ctx->bypass_str) {
         char *env_bypass = getenv("CPROXY_BYPASS");
-        if (env_bypass && is_valid_bypass_str(env_bypass)) ctx->bypass_str = strdup(env_bypass);
+        if (env_bypass && env_bypass[0] != '\0') {
+            if (is_valid_bypass_str(env_bypass)) {
+                ctx->bypass_str = strdup(env_bypass);
+            } else {
+                fprintf(stderr, "Warning: Invalid CPROXY_BYPASS environment variable '%s', ignoring.\n", env_bypass);
+            }
+        }
     }
 
     return 0;

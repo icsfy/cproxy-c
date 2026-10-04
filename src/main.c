@@ -71,6 +71,11 @@ void cleanup(void) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc < 1 || !argv || !argv[0]) {
+        fprintf(stderr, "Error: Invalid argument list\n");
+        return 1;
+    }
+
     atexit(cleanup);
 
     bool contiguous = true;
@@ -101,16 +106,17 @@ int main(int argc, char *argv[]) {
             perror("malloc failed");
             return 1;
         }
+        s_target_argv = target_argv;
+        s_target_argc = 0;
         for (int i = 0; i < target_argc; i++) {
             target_argv[i] = strdup(argv[optind + i]);
             if (!target_argv[i]) {
                 perror("strdup failed");
                 return 1;
             }
+            s_target_argc = i + 1;
         }
         target_argv[target_argc] = NULL;
-        s_target_argv = target_argv;
-        s_target_argc = target_argc;
     }
 
     if (target_argc > 0) {
@@ -225,6 +231,8 @@ int main(int argc, char *argv[]) {
         child_pid = fork();
         if (child_pid < 0) {
             perror("fork failed");
+            close(pipefd[0]);
+            close(pipefd[1]);
             return 1;
         }
         if (child_pid == 0) {
@@ -283,6 +291,9 @@ int main(int argc, char *argv[]) {
                 putenv(g_ctx.env_vars[i]);
             }
             
+            if (!target_argv || !target_argv[0]) {
+                _exit(127);
+            }
             execvp(target_argv[0], target_argv);
             int err = errno;
             perror("execvp failed");

@@ -1,6 +1,8 @@
 #include "cproxy.h"
 #include <dirent.h>
 
+static int write_cg_file(const char *name, const char *fmt, ...) PRINTF_FORMAT(2, 3);
+
 static int write_cg_file(const char *name, const char *fmt, ...) {
     char path[PATH_MAX + 64];
     snprintf(path, sizeof(path), "%s/%s", g_ctx.cgroup_path, name);
@@ -12,8 +14,8 @@ static int write_cg_file(const char *name, const char *fmt, ...) {
     va_start(args, fmt);
     int res = vfprintf(f, fmt, args);
     va_end(args);
-    fclose(f);
-    return (res < 0) ? -1 : 0;
+    int close_res = fclose(f);
+    return (res < 0 || close_res != 0) ? -1 : 0;
 }
 
 static int add_pid_to_cgroup(pid_t pid, const char *path) {
@@ -139,7 +141,7 @@ int setup_cgroup(pid_t pid) {
         perror("mkdir cgroup failed");
         return -1;
     }
-    g_ctx.cgroup_created = 1;
+    g_ctx.cgroup_created = true;
 
     if (add_pid_to_cgroup(pid, g_ctx.cgroup_path) != 0) {
         perror("Failed to add PID to cgroup");
@@ -217,7 +219,7 @@ void cleanup_cgroup(void) {
     if (!g_ctx.cgroup_created || g_ctx.cgroup_path[0] == '\0') return;
 
     if (g_ctx.dry_run) {
-        g_ctx.cgroup_created = 0;
+        g_ctx.cgroup_created = false;
         return;
     }
 
@@ -238,7 +240,7 @@ void cleanup_cgroup(void) {
     if (access(g_ctx.cgroup_path, F_OK) == 0) {
         if (g_ctx.verbose) log_warn("rmdir '%s' failed: %s", g_ctx.cgroup_path, strerror(errno));
     }
-    g_ctx.cgroup_created = 0;
+    g_ctx.cgroup_created = false;
 }
 
 static void cleanup_stale_cgroups_recursive(const char *base_path, int depth) {

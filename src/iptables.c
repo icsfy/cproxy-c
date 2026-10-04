@@ -56,7 +56,7 @@ static void cleanup_tproxy_routing(int mark, int family) {
     run_cmd_silent("%s route flush table %d", ip_cmd, mark);
 }
 
-int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match) {
+static int init_chain(const char *table, const char *chain, const char *parent, const char *iptables_cmd, const char *match) {
     if (!g_ctx.dry_run) {
         while (run_cmd_silent("%s -w -t %s -D %s %s -j %s", iptables_cmd, table, parent, match ? match : "", chain) == 0);
     } else {
@@ -80,7 +80,7 @@ static void destroy_chain(const char *table, const char *chain, const char *pare
     run_cmd_silent("%s -w -t %s -X %s", iptables_cmd, table, chain);
 }
 
-int apply_bypass_rules(const char* chain, const char* table, const char* iptables_cmd) {
+static int apply_bypass_rules(const char* chain, const char* table, const char* iptables_cmd) {
     if (g_ctx.bypass_count == 0) return 0;
 
     int is_ipv6 = (strcmp(iptables_cmd, "ip6tables") == 0);
@@ -610,6 +610,25 @@ static void cleanup_stale_ip_rules(void) {
                     if (mark == table && mark >= 10000) {
                         pid_t pid = (pid_t)(mark - 10000);
                         if (is_pid_alive(pid)) continue;
+
+                        // Verify this table was actually created by cproxy (contains "local" and "dev lo")
+                        // to avoid accidentally destroying WireGuard or custom policy routing tables
+                        char show_cmd[64];
+                        snprintf(show_cmd, sizeof(show_cmd), "%s route show table %u", cmds[i], table);
+                        pid_t route_pid = -1;
+                        FILE *rfp = safe_popen(show_cmd, &route_pid);
+                        bool is_cproxy_table = false;
+                        if (rfp) {
+                            char rline[256];
+                            while (fgets(rline, sizeof(rline), rfp)) {
+                                if (strstr(rline, "local") && strstr(rline, "dev lo")) {
+                                    is_cproxy_table = true;
+                                    break;
+                                }
+                            }
+                            safe_pclose(rfp, route_pid);
+                        }
+                        if (!is_cproxy_table) continue;
 
                         log_info("Removed stale ip rule for mark 0x%x (table %u)", mark, table);
                         while (run_cmd_silent("%s rule delete fwmark 0x%x table %u", cmds[i], mark, table) == 0);

@@ -280,4 +280,61 @@ else
     exit 1
 fi
 
+# 22. Reject --user and --env when --pid is specified
+sudo ./cproxy -i $$ -u nobody > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Simultaneous --pid and --user rejected"
+else
+    echo "[FAIL] Simultaneous --pid and --user accepted"
+    exit 1
+fi
+
+sudo ./cproxy -i $$ -e TEST=1 > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Simultaneous --pid and --env rejected"
+else
+    echo "[FAIL] Simultaneous --pid and --env accepted"
+    exit 1
+fi
+
+# 23. Reject oversized username (> 63 chars)
+LONG_USER=$(printf 'u%.0s' {1..80})
+sudo ./cproxy -u "$LONG_USER" -- ls > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Oversized username rejected"
+else
+    echo "[FAIL] Oversized username accepted"
+    exit 1
+fi
+
+# 24. Reject out-of-range PID
+sudo ./cproxy -i 99999999 > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "[PASS] Out-of-range PID rejected"
+else
+    echo "[FAIL] Out-of-range PID accepted"
+    exit 1
+fi
+
+# 25. Warn on invalid CPROXY_BYPASS environment variable
+WARN_OUT=$(sudo CPROXY_BYPASS="not_a_valid_ip" ./cproxy -D -- ls 2>&1)
+if echo "$WARN_OUT" | grep -q "Warning: Invalid CPROXY_BYPASS"; then
+    echo "[PASS] Invalid CPROXY_BYPASS emits warning"
+else
+    echo "[FAIL] Invalid CPROXY_BYPASS did not emit warning: $WARN_OUT"
+    exit 1
+fi
+
+# 26. Safe stale cleanup does not remove third-party routing rules (e.g. WireGuard)
+sudo ip rule add fwmark 0x12345 table 74565 2>/dev/null
+sudo ./cproxy --clean > /dev/null 2>&1
+RULE_REMAINS=$(ip rule show | grep "74565")
+sudo ip rule del fwmark 0x12345 table 74565 2>/dev/null
+if [ -n "$RULE_REMAINS" ]; then
+    echo "[PASS] Stale cleanup preserves third-party policy routing rules"
+else
+    echo "[FAIL] Stale cleanup deleted third-party policy routing rule"
+    exit 1
+fi
+
 echo "All basic tests passed!"

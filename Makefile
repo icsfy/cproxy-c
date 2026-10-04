@@ -1,6 +1,8 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -Werror -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_GNU_SOURCE -Iinclude -fPIE
-LDFLAGS = -Wl,-z,relro,-z,now -pie
+CC ?= gcc
+CFLAGS ?= -Wall -Wextra -Werror -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_GNU_SOURCE -Iinclude -fPIE
+CFLAGS += $(EXTRA_CFLAGS)
+LDFLAGS ?= -Wl,-z,relro,-z,now -pie
+LDFLAGS += $(EXTRA_LDFLAGS)
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 
